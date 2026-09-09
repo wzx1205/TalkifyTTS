@@ -21,3 +21,7 @@ local.properties
 /.idea/
 /.vscode/
 /doc/local/
+
+# local build artifacts
+hs_err_pid*.log
+book-smoke-test/
