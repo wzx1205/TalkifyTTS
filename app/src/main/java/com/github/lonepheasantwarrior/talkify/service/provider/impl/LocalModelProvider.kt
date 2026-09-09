@@ -5,6 +5,9 @@ import android.media.AudioFormat
 import android.speech.tts.Voice
 import com.github.lonepheasantwarrior.talkify.R
 import com.github.lonepheasantwarrior.talkify.TalkifyAppHolder
+import com.github.lonepheasantwarrior.talkify.book.config.BookTtsSettings
+import com.github.lonepheasantwarrior.talkify.book.pipeline.DialogueAnalyzer
+import com.github.lonepheasantwarrior.talkify.book.router.RoleVoiceRouter
 import com.github.lonepheasantwarrior.talkify.domain.model.BaseProviderConfig
 import com.github.lonepheasantwarrior.talkify.domain.model.LocalModelConfig
 import com.github.lonepheasantwarrior.talkify.domain.model.LocalModelInfo
@@ -232,7 +235,7 @@ class LocalModelProvider : AbstractTtsProvider() {
             try {
                 val currentEngine = ensureEngine(modelId, modelInfo)
 
-                val speed = if (params.speechRate > 0) {
+                val baseSpeed = if (params.speechRate > 0) {
                     params.speechRate / 100f
                 } else {
                     DEFAULT_SPEED
@@ -240,56 +243,44 @@ class LocalModelProvider : AbstractTtsProvider() {
 
                 listener.onSynthesisStarted()
 
-                // ZipVoice 音色 = 参考音频 + 逐字稿；音色以内置目录为准，
-                // 历史持久化的 voiceId（如已隐藏的雷军音色）不在目录内时
-                // 透明迁移到目录默认音色，用户侧体验不变
-                val requestedVoiceName = extractRealVoiceName(lc.voiceId) ?: lc.voiceId
-                val bundledVoices = LocalVoiceCatalog.getVoices()
-                val voice = bundledVoices.firstOrNull { it.voiceId == requestedVoiceName }
-                    ?: bundledVoices.firstOrNull()
-                    ?: modelInfo.voiceList.firstOrNull { it.voiceId == requestedVoiceName }
-                    ?: modelInfo.voiceList.firstOrNull()
-                    ?: throw IllegalStateException("模型 ${modelInfo.id} 未配置音色")
-                if (requestedVoiceName != voice.voiceId) {
-                    logWarning("Voice '$requestedVoiceName' unavailable, falling back to '${voice.voiceId}'")
-                }
                 val modelDir = LocalModelManager.getModelDownloadedDir(modelId)
                     ?: throw IllegalStateException("无法获取模型目录: $modelId")
-                val reference = synchronized(referenceCache) {
-                    referenceCache.getOrPut("${modelInfo.id}:${voice.voiceId}") {
-                        if (voice.isBundled) {
-                            val context = TalkifyAppHolder.getContext()
-                                ?: throw IllegalStateException("Context unavailable for bundled voice: ${voice.voiceId}")
-                            context.assets.open("${LocalVoiceCatalog.ASSETS_DIR}/${voice.referenceFileName}")
-                                .use { WavSampleReader.read(it) }
-                        } else {
-                            WavSampleReader.read(File(modelDir, voice.referenceFileName))
-                        }
-                    }
-                }
-                logInfo("Using voice=${voice.voiceId}, reference=${voice.referenceFileName}")
 
-                // 真正流式合成：Sherpa-onnx 每生成一小段 PCM（通常为一个句子）
-                // 就通过 generateWithConfigAndCallback 回调第一时间送达给 Android TTS callback。
+                val bookMode = BookTtsSettings.isEnabled()
+                // 真正流式合成：Sherpa-onnx 每生成一小段 PCM 就回调给 Android TTS。
                 // 共享引擎串行化：后到请求排队等待，避免并发推理争抢 CPU
                 synthesisMutex.withLock {
-                    currentEngine.synthesizeStream(
-                        text = text,
-                        referenceAudio = reference.samples,
-                        referenceSampleRate = reference.sampleRate,
-                        referenceText = voice.referenceText,
-                        speed = speed
-                    ) { pcmData, sampleRate ->
-                        if (!isCancelled) {
-                            listener.onAudioAvailable(
-                                pcmData,
-                                sampleRate,
-                                AudioFormat.ENCODING_PCM_16BIT,
-                                1  // 单声道
-                            )
+                    if (bookMode) {
+                        synthesizeBookMultiRole(
+                            engine = currentEngine,
+                            text = text,
+                            modelInfo = modelInfo,
+                            modelDir = modelDir,
+                            fallbackVoiceId = lc.voiceId,
+                            baseSpeed = baseSpeed,
+                            listener = listener
+                        )
+                    } else {
+                        val voice = resolveVoice(lc.voiceId, modelInfo)
+                        val reference = loadReference(modelInfo, modelDir, voice)
+                        logInfo("Using voice=${voice.voiceId}, reference=${voice.referenceFileName}")
+                        currentEngine.synthesizeStream(
+                            text = text,
+                            referenceAudio = reference.samples,
+                            referenceSampleRate = reference.sampleRate,
+                            referenceText = voice.referenceText,
+                            speed = baseSpeed
+                        ) { pcmData, sampleRate ->
+                            if (!isCancelled) {
+                                listener.onAudioAvailable(
+                                    pcmData,
+                                    sampleRate,
+                                    AudioFormat.ENCODING_PCM_16BIT,
+                                    1  // 单声道
+                                )
+                            }
+                            !isCancelled
                         }
-                        // 返回 true 继续合成，false 中断（对应停止播放）
-                        !isCancelled
                     }
                 }
 
@@ -305,6 +296,110 @@ class LocalModelProvider : AbstractTtsProvider() {
             } finally {
                 // 成功与失败都要安排：失败路径若不安排，引擎 200MB 内存会永不释放
                 scheduleEngineIdleRelease()
+            }
+        }
+    }
+
+    /**
+     * 多角色听书：对白分析 → 按句换参考音色 → 逐段流式合成
+     *
+     * 仅在 [BookTtsSettings.isEnabled] 时走此路径；分析失败回退整段单音色。
+     */
+    private fun synthesizeBookMultiRole(
+        engine: SherpaTtsEngine,
+        text: String,
+        modelInfo: LocalModelInfo,
+        modelDir: File,
+        fallbackVoiceId: String,
+        baseSpeed: Float,
+        listener: TtsSynthesisListener
+    ) {
+        // 不在此处 resetSession：说话人→槽位映射需跨段落保持，
+        // 否则同一角色每段被重新分配音色，多角色听书失效
+        val utterances = try {
+            DialogueAnalyzer.analyze(text)
+        } catch (e: Exception) {
+            logWarning("Dialogue analysis failed, fallback to single voice: ${e.message}")
+            emptyList()
+        }
+
+        if (utterances.isEmpty()) {
+            val voice = resolveVoice(fallbackVoiceId, modelInfo)
+            val reference = loadReference(modelInfo, modelDir, voice)
+            engine.synthesizeStream(
+                text = text,
+                referenceAudio = reference.samples,
+                referenceSampleRate = reference.sampleRate,
+                referenceText = voice.referenceText,
+                speed = baseSpeed
+            ) { pcm, sr ->
+                if (!isCancelled) {
+                    listener.onAudioAvailable(pcm, sr, AudioFormat.ENCODING_PCM_16BIT, 1)
+                }
+                !isCancelled
+            }
+            return
+        }
+
+        logInfo("Book multi-role: ${utterances.size} utterances")
+        for (u in utterances) {
+            if (isCancelled) return
+            val plan = RoleVoiceRouter.resolve(u, fallbackVoiceId)
+            val voice = resolveVoice(plan.voiceId ?: fallbackVoiceId, modelInfo)
+            val reference = loadReference(modelInfo, modelDir, voice)
+            val speed = (baseSpeed * plan.speedMultiplier).coerceIn(0.5f, 2.0f)
+            logInfo(
+                "Utterance speaker=${u.speaker} quote=${u.isQuote} emotion=${u.emotion} " +
+                    "voice=${voice.voiceId} speed=$speed text=${u.text.take(24)}"
+            )
+            val completed = engine.synthesizeStream(
+                text = u.text,
+                referenceAudio = reference.samples,
+                referenceSampleRate = reference.sampleRate,
+                referenceText = voice.referenceText,
+                speed = speed
+            ) { pcm, sr ->
+                if (!isCancelled) {
+                    listener.onAudioAvailable(pcm, sr, AudioFormat.ENCODING_PCM_16BIT, 1)
+                }
+                !isCancelled
+            }
+            if (!completed || isCancelled) return
+        }
+    }
+
+    /**
+     * 解析音色：请求 ID 优先，不可用时回落目录默认音色
+     */
+    private fun resolveVoice(requestedVoiceId: String?, modelInfo: LocalModelInfo): LocalModelVoice {
+        val requested = extractRealVoiceName(requestedVoiceId) ?: requestedVoiceId.orEmpty()
+        val bundledVoices = LocalVoiceCatalog.getVoices()
+        val voice = bundledVoices.firstOrNull { it.voiceId == requested }
+            ?: bundledVoices.firstOrNull()
+            ?: modelInfo.voiceList.firstOrNull { it.voiceId == requested }
+            ?: modelInfo.voiceList.firstOrNull()
+            ?: throw IllegalStateException("模型 ${modelInfo.id} 未配置音色")
+        if (requested.isNotBlank() && requested != voice.voiceId) {
+            logWarning("Voice '$requested' unavailable, falling back to '${voice.voiceId}'")
+        }
+        return voice
+    }
+
+    private fun loadReference(
+        modelInfo: LocalModelInfo,
+        modelDir: File,
+        voice: LocalModelVoice
+    ): WavSampleReader.WavSamples {
+        return synchronized(referenceCache) {
+            referenceCache.getOrPut("${modelInfo.id}:${voice.voiceId}") {
+                if (voice.isBundled) {
+                    val context = TalkifyAppHolder.getContext()
+                        ?: throw IllegalStateException("Context unavailable for bundled voice: ${voice.voiceId}")
+                    context.assets.open("${LocalVoiceCatalog.ASSETS_DIR}/${voice.referenceFileName}")
+                        .use { WavSampleReader.read(it) }
+                } else {
+                    WavSampleReader.read(File(modelDir, voice.referenceFileName))
+                }
             }
         }
     }

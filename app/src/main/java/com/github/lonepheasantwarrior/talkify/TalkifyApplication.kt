@@ -6,6 +6,7 @@ import android.os.Bundle
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
+import com.github.lonepheasantwarrior.talkify.book.config.BookTtsSettings
 import com.github.lonepheasantwarrior.talkify.infrastructure.app.notification.TalkifyNotificationChannel
 import com.github.lonepheasantwarrior.talkify.infrastructure.app.notification.TalkifyNotificationHelper
 import com.github.lonepheasantwarrior.talkify.infrastructure.app.telemetry.DeviceInfoCollector
@@ -23,6 +24,7 @@ class TalkifyApplication : Application() {
         super.onCreate()
         TtsLogger.i(TAG) { "TalkifyApplication onCreate" }
         TalkifyAppHolder.setContext(this)
+        BookTtsSettings.init(this)
         TalkifyExceptionHandler.initialize()
         createNotificationChannels()
         deleteLegacyTelemetryPrefs()
