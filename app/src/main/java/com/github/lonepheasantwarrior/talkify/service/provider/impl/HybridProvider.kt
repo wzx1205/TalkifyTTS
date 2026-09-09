@@ -184,7 +184,17 @@ class HybridProvider : AbstractTtsProvider() {
                         logDebug("#$index 旁白→MiMo text=${u.text.take(16)}")
                         runBuffered(u.text, cfg, xiaomiProvider, listener, plan.speedMultiplier)
                     } else {
-                        val edgeVoice = edgeVoiceFor(u.speaker) ?: SLOT_VOICES[slot] ?: fallbackVoiceId
+                        var edgeVoice = edgeVoiceFor(u.speaker) ?: SLOT_VOICES[slot] ?: fallbackVoiceId
+                        // 相邻对白防撞：不同角色连续对话时在 Edge 同性别池内轮转
+                        if (RoleVoiceRouter.collidesWithPrevious(u.speaker, edgeVoice)) {
+                            val (femalePool, malePool) =
+                                com.github.lonepheasantwarrior.talkify.book.store.VoiceAutoAssign
+                                    .poolsFor(com.github.lonepheasantwarrior.talkify.book.store.VoiceAutoAssign.Scheme.EDGE)
+                            val pool = if (edgeVoice in femalePool) femalePool else malePool
+                            val idx = pool.indexOf(edgeVoice)
+                            if (idx >= 0) edgeVoice = pool[(idx + 1) % pool.size]
+                        }
+                        RoleVoiceRouter.registerSpoken(u.speaker, edgeVoice)
                         logDebug("#$index 角色→Edge speaker=${u.speaker} voice=$edgeVoice emotion=${u.emotion} text=${u.text.take(16)}")
                         runBuffered(
                             u.text,

@@ -236,6 +236,43 @@ fun BookCharactersScreen(
                     )
                 }
             } else {
+                // 音色方案：把整本书的绑定一键转换到目标引擎的音色池
+                var schemeState by remember(current.bookId) {
+                    mutableStateOf(detectScheme(current))
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    com.github.lonepheasantwarrior.talkify.book.store.VoiceAutoAssign.Scheme.entries.forEach { scheme ->
+                        FilterChip(
+                            selected = scheme == schemeState,
+                            onClick = {
+                                schemeState = scheme
+                                // 一键转换：同性别池内按索引映射（可逆）
+                                val converted = current.characters.map { c ->
+                                    c.copy(
+                                        voiceId = com.github.lonepheasantwarrior.talkify.book.store.VoiceAutoAssign
+                                            .convertVoice(c.voiceId, c.gender, scheme) ?: c.voiceId
+                                    )
+                                }
+                                CharacterBookStore.save(current.copy(characters = converted))
+                                books = CharacterBookStore.list()
+                            },
+                            label = {
+                                Text(
+                                    when (scheme) {
+                                        com.github.lonepheasantwarrior.talkify.book.store.VoiceAutoAssign.Scheme.LOCAL -> "本地"
+                                        com.github.lonepheasantwarrior.talkify.book.store.VoiceAutoAssign.Scheme.MIMO -> "MiMo"
+                                        com.github.lonepheasantwarrior.talkify.book.store.VoiceAutoAssign.Scheme.EDGE -> "Edge"
+                                    }
+                                )
+                            }
+                        )
+                    }
+                }
                 CharacterList(
                     book = current,
                     bundledVoices = bundledVoices,
@@ -258,7 +295,8 @@ fun BookCharactersScreen(
                                     dialogueCount = it.dialogueCount,
                                     sampleQuote = it.sampleQuote
                                 )
-                            }
+                            },
+                            schemeState
                         )
                         CharacterBookStore.save(current.copy(characters = re))
                         books = CharacterBookStore.list()
@@ -267,6 +305,15 @@ fun BookCharactersScreen(
             }
         }
     }
+}
+
+/** 按绑定音色归属推断当前方案（多数派） */
+private fun detectScheme(book: CharacterBook): com.github.lonepheasantwarrior.talkify.book.store.VoiceAutoAssign.Scheme {
+    val counts = book.characters
+        .mapNotNull { com.github.lonepheasantwarrior.talkify.book.store.VoiceAutoAssign.schemeOf(it.voiceId) }
+        .groupingBy { it }.eachCount()
+    return counts.maxByOrNull { it.value }?.key
+        ?: com.github.lonepheasantwarrior.talkify.book.store.VoiceAutoAssign.Scheme.LOCAL
 }
 
 @Composable
