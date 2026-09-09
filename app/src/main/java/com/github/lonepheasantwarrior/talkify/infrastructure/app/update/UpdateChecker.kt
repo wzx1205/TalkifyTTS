@@ -11,7 +11,7 @@ import java.net.URL
 import java.net.UnknownHostException
 
 class UpdateChecker(
-    private val owner: String = "LonePheasantWarrior",
+    private val owner: String = "wzx1205",
     private val repo: String = "TalkifyTTS"
 ) {
     companion object {
@@ -179,16 +179,9 @@ class UpdateChecker(
         val maxLength = Math.max(latestParts.size, currentParts.size)
 
         for (i in 0.until(maxLength).toList()) {
-            val latestNum = try {
-                latestParts.getOrNull(i)?.toInt() ?: 0
-            } catch (e: Exception) {
-                0
-            }
-            val currentNum = try {
-                currentParts.getOrNull(i)?.toInt() ?: 0
-            } catch (e: Exception) {
-                0
-            }
+            // 容忍 "31-multirole" 这类带后缀的版本段，取前导数字参与比较
+            val latestNum = leadingInt(latestParts.getOrNull(i))
+            val currentNum = leadingInt(currentParts.getOrNull(i))
 
             when {
                 latestNum > currentNum -> return true
@@ -197,5 +190,11 @@ class UpdateChecker(
         }
 
         return false
+    }
+
+    private fun leadingInt(part: String?): Int {
+        if (part.isNullOrEmpty()) return 0
+        val digits = part.takeWhile { it.isDigit() }
+        return if (digits.isEmpty()) 0 else digits.toInt()
     }
 }

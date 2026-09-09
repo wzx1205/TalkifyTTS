@@ -143,9 +143,13 @@
     <!-- 关于页面 -->
     <string name="about_title">关于</string>
     <string name="about_version_format">版本 %1$s</string>
+    <string name="about_author_format">作者：%1$s</string>
+    <string name="about_author_value">wzx1205</string>
     <string name="about_github">开源仓库</string>
-    <string name="about_github_url">https://github.com/LonePheasantWarrior/TalkifyTTS</string>
-    <string name="about_description">一款基于 Android 的现代化 TTS 引擎应用，连接云端大模型的高质量语音合成能力</string>
+    <string name="about_github_url">https://github.com/wzx1205/TalkifyTTS</string>
+    <string name="about_upstream">上游项目</string>
+    <string name="about_upstream_url">https://github.com/LonePheasantWarrior/TalkifyTTS</string>
+    <string name="about_description">多角色听书分支（book-multirole）：本地大模型离线语音合成，自动分析小说对白与旁白、按角色和性别切换声线，配合阅读类 App 听书。基于上游 TalkifyTTS 修改。</string>
     <string name="about_qq_group">QQ群</string>
     <string name="about_qq_group_number">1087849270</string>
     <string name="about_qq_group_note">仅限技术交流，禁止商业推广</string>
@@ -165,6 +169,10 @@
 
     <!-- 检查更新 -->
     <string name="check_for_updates">检查更新</string>
+
+    <!-- 多角色听书（本地模型） -->
+    <string name="book_mode_title">多角色听书</string>
+    <string name="book_mode_hint">自动识别对白/旁白与性别，按角色切换声线（仅本地模型）</string>
 
     <!-- 打赏功能 -->
     <string name="donate_title">选择打赏方式</string>
