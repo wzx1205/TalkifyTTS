@@ -28,6 +28,7 @@ import com.github.lonepheasantwarrior.talkify.infrastructure.app.telemetry.recor
 import com.github.lonepheasantwarrior.talkify.service.TtsLogger
 import com.github.lonepheasantwarrior.talkify.ui.components.TelemetryCaptureHost
 import com.github.lonepheasantwarrior.talkify.ui.screens.AboutScreen
+import com.github.lonepheasantwarrior.talkify.ui.screens.BookCharactersScreen
 import com.github.lonepheasantwarrior.talkify.ui.screens.MainScreen
 import com.github.lonepheasantwarrior.talkify.ui.theme.TalkifyTheme
 
@@ -38,6 +39,7 @@ class MainActivity : ComponentActivity() {
 
         private const val ROUTE_MAIN = "main"
         private const val ROUTE_ABOUT = "about"
+        private const val ROUTE_BOOK_CHARACTERS = "bookCharacters"
     }
 
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
@@ -83,7 +85,15 @@ class MainActivity : ComponentActivity() {
                                             .putBoolean("has_opened_about_page", true)
                                             .apply()
                                         navController.navigate(ROUTE_ABOUT)
+                                    },
+                                    onBookCharactersClick = {
+                                        navController.navigate(ROUTE_BOOK_CHARACTERS)
                                     }
+                                )
+                            }
+                            composable(ROUTE_BOOK_CHARACTERS) {
+                                BookCharactersScreen(
+                                    onBackClick = { navController.popBackStack() }
                                 )
                             }
                             composable(ROUTE_ABOUT) {

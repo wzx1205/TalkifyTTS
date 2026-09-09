@@ -4,6 +4,7 @@ import com.github.lonepheasantwarrior.talkify.book.config.BookTtsSettings
 import com.github.lonepheasantwarrior.talkify.book.model.EmotionTag
 import com.github.lonepheasantwarrior.talkify.book.model.Gender
 import com.github.lonepheasantwarrior.talkify.book.model.Utterance
+import com.github.lonepheasantwarrior.talkify.book.store.CharacterBookStore
 
 /**
  * 角色 → 音色 / 语速 解析结果
@@ -53,6 +54,9 @@ object RoleVoiceRouter {
         if (!utterance.isQuote || utterance.speaker == Utterance.SPEAKER_NARRATOR) {
             return BookTtsSettings.voiceForRole(BookTtsSettings.ROLE_NARRATOR) ?: fallbackVoiceId
         }
+
+        // 具名角色优先查角色册（EPUB 全书扫描的用户绑定），命中即精确用声
+        CharacterBookStore.activeVoiceFor(utterance.speaker)?.let { return it }
 
         val slot = speakerSlot.getOrPut(utterance.speaker) {
             when (utterance.gender) {

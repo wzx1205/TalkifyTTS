@@ -115,6 +115,34 @@ class RuleEngineTest {
     }
 
     @Test
+    fun `强调引号招式名不是对白`() {
+        // 《剑来》实录：满天花雨"万花劫"动了 —— 引号是招式名，不是说话
+        val text = "满天花雨“万花劫”动了，缓缓飘在空中的花瓣，开始急速旋转，发出轻轻的“嗡嗡”声。"
+        val utterances = RuleEngine.analyze(text)
+        assertEquals(1, utterances.size)
+        assertTrue(!utterances[0].isQuote)
+        assertTrue(utterances[0].text.contains("万花劫"))
+        assertTrue(utterances[0].text.contains("嗡嗡"))
+        assertEquals("旁白", utterances[0].speaker)
+    }
+
+    @Test
+    fun `省略冒号的短对白不被误判为强调`() {
+        // 引号前有说话动词时即使嵌在句中、无标点，也是对白
+        val text = "她轻声道“好”。"
+        val quotes = RuleEngine.analyze(text).filter { it.isQuote }
+        assertEquals(1, quotes.size)
+        assertEquals("好", quotes[0].text)
+    }
+
+    @Test
+    fun `行首引号对白不受强调规则影响`() {
+        val text = "“万花劫不过是小道。”傅山说道。"
+        val quotes = RuleEngine.analyze(text).filter { it.isQuote }
+        assertEquals(1, quotes.size)
+    }
+
+    @Test
     fun `上段以旁白结尾时跨段延续说话人`() {
         // 《飘邈之旅》联调实录：傅山交代完感慨一句，下一段继续指示
         val p1 = "傅山说道：“我第一次也是从这里到封缘星的。”语气里透着感慨。"

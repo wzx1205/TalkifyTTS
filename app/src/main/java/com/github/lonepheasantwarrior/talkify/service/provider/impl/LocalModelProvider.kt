@@ -8,6 +8,7 @@ import com.github.lonepheasantwarrior.talkify.TalkifyAppHolder
 import com.github.lonepheasantwarrior.talkify.book.config.BookTtsSettings
 import com.github.lonepheasantwarrior.talkify.book.pipeline.DialogueAnalyzer
 import com.github.lonepheasantwarrior.talkify.book.router.RoleVoiceRouter
+import com.github.lonepheasantwarrior.talkify.book.store.CharacterBookStore
 import com.github.lonepheasantwarrior.talkify.domain.model.BaseProviderConfig
 import com.github.lonepheasantwarrior.talkify.domain.model.LocalModelConfig
 import com.github.lonepheasantwarrior.talkify.domain.model.LocalModelInfo
@@ -246,6 +247,12 @@ class LocalModelProvider : AbstractTtsProvider() {
                 val modelDir = LocalModelManager.getModelDownloadedDir(modelId)
                     ?: throw IllegalStateException("无法获取模型目录: $modelId")
 
+                // 角色册预热：把生效书所有绑定音色的参考音频提前解码，
+                // 运行时换声零首包惩罚（异步，不阻塞本次合成）
+                if (BookTtsSettings.isEnabled()) {
+                    launch { preloadBookVoices(modelInfo, modelDir) }
+                }
+
                 val bookMode = BookTtsSettings.isEnabled()
                 // 真正流式合成：Sherpa-onnx 每生成一小段 PCM 就回调给 Android TTS。
                 // 共享引擎串行化：后到请求排队等待，避免并发推理争抢 CPU
@@ -297,6 +304,32 @@ class LocalModelProvider : AbstractTtsProvider() {
                 // 成功与失败都要安排：失败路径若不安排，引擎 200MB 内存会永不释放
                 scheduleEngineIdleRelease()
             }
+        }
+    }
+
+    /**
+     * 角色册预热：预解码生效书全部绑定音色的参考音频进缓存
+     */
+    private suspend fun preloadBookVoices(modelInfo: LocalModelInfo, modelDir: File) {
+        try {
+            val bookId = CharacterBookStore.activeBookId() ?: return
+            val voiceIds = CharacterBookStore.load(bookId)
+                ?.characters?.map { it.voiceId }?.distinct()
+                ?: return
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                for (id in voiceIds) {
+                    if (referenceCache.containsKey("${modelInfo.id}:$id")) continue
+                    runCatching {
+                        val voice = resolveVoice(id, modelInfo)
+                        loadReference(modelInfo, modelDir, voice)
+                    }.onFailure {
+                        logWarning("Preload voice failed for $id: ${it.message}")
+                    }
+                }
+            }
+            logInfo("Book voices preloaded: ${voiceIds.size}")
+        } catch (e: Exception) {
+            logWarning("Book voice preload skipped: ${e.message}")
         }
     }
 

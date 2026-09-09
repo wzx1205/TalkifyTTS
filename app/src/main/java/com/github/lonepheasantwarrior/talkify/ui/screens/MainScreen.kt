@@ -107,7 +107,8 @@ import kotlinx.coroutines.launch
 fun MainScreen(
     modifier: Modifier = Modifier,
     viewModel: MainViewModel = viewModel(),
-    onAboutClick: () -> Unit = {}
+    onAboutClick: () -> Unit = {},
+    onBookCharactersClick: () -> Unit = {}
 ) {
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val context = LocalContext.current
@@ -411,7 +412,9 @@ fun MainScreen(
                                 mutableStateOf(BookTtsSettings.isEnabled())
                             }
                             Card(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(onClick = onBookCharactersClick),
                                 colors = CardDefaults.cardColors(
                                     containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
                                 ),
@@ -432,6 +435,11 @@ fun MainScreen(
                                             text = stringResource(R.string.book_mode_hint),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = stringResource(R.string.book_characters_manage),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.primary
                                         )
                                     }
                                     Switch(

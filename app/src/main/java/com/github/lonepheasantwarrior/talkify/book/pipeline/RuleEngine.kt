@@ -106,6 +106,13 @@ object RuleEngine {
             if (inner.isNotEmpty()) {
                 // 归因只看「上一引号结束到本引号开始」之间的文本，避免错配前面引语的提示语
                 val attributionWindow = normalized.substring(cursor, span.start)
+                // 强调/拟声引号（招式名"万花劫"、象声词"嗡嗡"）不是说话，并回旁白正文
+                if (isEmbeddedEmphasis(normalized, span, attributionWindow)) {
+                    // 以旁白身份加回，mergeShortNarration 会把它与前后旁白拼回原句
+                    result.add(narratorUtterance(inner))
+                    cursor = span.end
+                    continue
+                }
                 val beforeQuote = beforeQuoteWindow(normalized, span)
                 val afterEnd = (span.end + 40).coerceAtMost(normalized.length)
                 val emotionWindow = beforeQuote + inner + normalized.substring(span.end, afterEnd)
@@ -230,6 +237,27 @@ object RuleEngine {
     }
 
     /**
+     * 强调/拟声引号判定（网文里引号还用于招式名、象声词，如
+     * 「满天花雨"万花劫"动了」「发出轻轻的"嗡嗡"声」）
+     *
+     * 三条同时满足才判重点（宁漏勿误，别把真对白读成旁白）：
+     * 1. 开引号嵌在句中：前一字符是汉字/字母/数字（真对白前通常是冒号/标点/行首）
+     * 2. 引号前 20 字内无说/道动词（有动词说明是省略冒号的对白，如 轻声道"好"）
+     * 3. 引号内短（≤8字）且无句末标点（"走吧。"这种有标点的仍是对白）
+     */
+    private fun isEmbeddedEmphasis(text: String, span: QuoteSpan, attributionWindow: String): Boolean {
+        if (span.start == 0) return false
+        val prev = text[span.start - 1]
+        val prevContinuesSentence = prev.code in 0x4E00..0x9FFF || prev.isLetterOrDigit()
+        if (!prevContinuesSentence) return false
+        if (findLastSpeechVerb(attributionWindow.takeLast(20)) != null) return false
+        val inner = text.substring(span.innerStart, span.innerEnd).trim()
+        if (inner.isEmpty() || inner.length > 8) return false
+        val lastChar = inner.last()
+        return lastChar !in "！？。，；：…!?,.;:"
+    }
+
+    /**
      * 引号前窗口：用于说话人抽取（截到开引号前）
      */
     private fun beforeQuoteWindow(text: String, span: QuoteSpan): String {
@@ -281,22 +309,52 @@ object RuleEngine {
     }
 
     /**
-     * 从提示语前缀提取主语人名：取最后一小句的开头 2~4 字
+     * 从提示语前缀抽取主语人名。
+     *
+     * 顺序：整小句即名（≤4字，如「秘书小玉」）→ 长小句取尾3/尾2
+     * （「落魄山陈平安」→陈平安）→ 前一小句开头（「少女快步走来，脆声喊道」→少女）。
+     * 每个候选都过 [validateName] 校验；整句校验失败再试句首前缀
+     * （「林风皱眉道」→林风）。
      */
     private fun extractSubjectName(prefix: String): String? {
-        var clause = lastClause(prefix)
+        val clause = lastClause(prefix)
         if (clause.isEmpty()) return null
 
-        // 去掉句首代词/发语词
-        clause = clause.removePrefix("只见").removePrefix("这时").removePrefix("此时")
+        if (clause.length <= 4) {
+            validateName(clause)?.let { return it }
+            for (len in intArrayOf(3, 2)) {
+                if (len >= clause.length) break
+                validateName(clause.take(len))?.let { return it }
+            }
+        } else {
+            // 尾切优先（名字紧邻动词），头切兜底（名字在句首、后接状语）
+            validateName(clause.takeLast(3))?.let { return it }
+            validateName(clause.takeLast(2))?.let { return it }
+            validateName(clause.take(3))?.let { return it }
+            validateName(clause.take(2))?.let { return it }
+        }
+        return prevClauseHead(prefix)
+    }
+
+    /**
+     * 前一小句的句首主语：「少女快步走来，脆声喊道：」→「少女」
+     */
+    private fun prevClauseHead(prefix: String): String? {
+        val trimmed = prefix.trimEnd('，', '。', '！', '？', '：', ':', '、', '；', ';', ' ', '\n', '\t')
+        val cut = trimmed.lastIndexOfAny(charArrayOf('，', '。', '！', '？', '、', '；', ';', '\n'))
+        if (cut <= 0) return null
+        val seg = trimmed.substring(0, cut)
+        val prevCut = seg.lastIndexOfAny(charArrayOf('，', '。', '！', '？', '、', '；', ';', '\n'))
+        var s = (if (prevCut >= 0) seg.substring(prevCut + 1) else seg).trim()
+            .trimStart('“', '”', '「', '」', '『', '』', '"', '\'', '‘', '’', '：', ':')
+            .trim()
+        s = s.removePrefix("只见").removePrefix("这时").removePrefix("此时")
             .removePrefix("随后").removePrefix("接着").removePrefix("然后")
             .removePrefix("他").removePrefix("她").removePrefix("它")
-        if (clause.isEmpty()) return null
-
-        for (len in intArrayOf(2, 3, 4)) {
-            if (clause.length < len) continue
-            val name = clause.substring(0, len)
-            if (isLikelyPersonName(name)) return name
+        if (s.isEmpty()) return null
+        for (len in intArrayOf(3, 2, 4)) {
+            if (s.length < len) break
+            validateName(s.take(len))?.let { return it }
         }
         return null
     }
@@ -317,29 +375,73 @@ object RuleEngine {
             .trim()
     }
 
-    private fun isLikelyPersonName(token: String): Boolean {
-        if (token.length !in 2..4) return false
-        val blacklist = listOf(
-            "剑柄", "长剑", "手中", "身后", "面前", "心里", "脸上", "眼中", "身上",
-            "沉默", "知道", "必须", "危险", "没有", "可以", "这个", "那个", "什么",
-            "一起", "出来", "起来", "过去", "过来", "下来", "上去", "皱眉", "低头",
-            "抬头", "摇头", "点头", "握紧", "皱着", "叹气", "叹道", "笑道", "说道",
-            "听完", "说完", "看完", "想完", "回到", "走进", "拉出", "翻出"
-        )
-        if (blacklist.any { token.contains(it) }) return false
-        if (token.any { it == '说' || it == '道' || it == '喊' || it == '吼' }) return false
-        // 首字不应是助词/连词/引号/趋向动词/副词（听/走/不/很…多为动作或修饰短语开头）
-        if (token[0] in charArrayOf(
-                '的', '了', '着', '就', '也', '都', '还', '又', '再', '而', '“', '”', '「', '』',
-                '听', '走', '站', '立', '坐', '回', '进', '刚', '翻', '拉',
-                '不', '很', '太', '真', '更', '最', '挺', '稍', '略'
-            )
-        ) {
-            return false
-        }
-        // 含完成体/持续体标记的多是动作短语（听完电话 / 指着铠甲）
-        if (token.contains('完') || token.contains('着')) return false
-        return true
+    /** 人名末字不能是这些（候选切进了状语/动词） */
+    private val nameStopLastChars = charArrayOf(
+        '突', '忽', '忙', '又', '再', '才', '便', '还', '轻', '缓', '冷', '苦', '微', '低',
+        '沉', '厉', '颤', '怒', '叹', '笑', '说', '道', '喊', '叫', '问', '呼', '嘀', '喃',
+        '嘟', '啧', '着', '了', '的', '地', '得', '声', '是', '快', '大', '无', '性', '起',
+        '头', '言', '语', '气', '看', '望', '感', '惊', '愣', '立', '坐', '步', '吟', '嘲',
+        '劝', '慰', '骂', '嚷', '至', '过', '住', '开', '手', '眼', '心',
+        '摇', '皱', '抬', '垂', '俯', '仰', '瞪', '瞥', '瞄', '眨', '撇', '咧',
+        '抿', '挥', '摆', '搂', '抱', '扯', '推', '拍', '敲', '指', '自'
+    )
+
+    /** 名字首字不能是这些（虚词/介词/副词，几乎不入名） */
+    private val nameStopFirstChars = charArrayOf(
+        '的', '了', '着', '就', '也', '都', '还', '又', '再', '而', '“', '”', '「', '』',
+        '听', '走', '站', '立', '坐', '回', '进', '刚', '翻', '拉', '不', '很', '太', '真',
+        '更', '最', '挺', '稍', '略', '以', '便', '才', '连', '被', '把', '向', '往', '从',
+        '即', '是', '则', '却', '竟', '乃', '这', '那', '其', '之', '与', '和', '同', '跟',
+        '没', '在', '于', '给', '让', '使', '虽', '但', '只', '未', '别', '然'
+    )
+
+    /** 候选含这些字多为拟声/语气词，不是人名 */
+    private val nameStopAnyChars = charArrayOf(
+        '哈', '呵', '嘻', '啦', '哟', '嘿', '哦', '喔', '咦', '唉', '呀', '呗', '咯',
+        '噢', '嗡', '咔', '啪', '咚', '哝', '嗤', '呜', '哼'
+    )
+
+    private val nameBlacklist = listOf(
+        "剑柄", "长剑", "手中", "身后", "面前", "心里", "脸上", "眼中", "身上",
+        "沉默", "知道", "必须", "危险", "没有", "可以", "这个", "那个", "什么",
+        "一起", "出来", "起来", "过去", "过来", "下来", "上去", "皱眉", "低头",
+        "抬头", "摇头", "点头", "握紧", "皱着", "叹气", "叹道", "笑道", "说道",
+        "听完", "说完", "看完", "想完", "回到", "走进", "拉出", "翻出",
+        // 联调与《剑来》全书扫描发现的状语/动作/神态短语
+        "轻声", "小声", "大声", "低声", "沉声", "厉声", "柔声", "颤声", "高声",
+        "随口", "顺口", "开口", "转头", "回头", "好奇", "年轻", "年迈", "只是",
+        "顿时", "立刻", "随即", "马上", "连忙", "急忙", "悄悄", "默默", "缓缓",
+        "轻轻", "渐渐", "慢慢", "喃喃", "啧啧", "笑眯", "面色", "脸色", "神情",
+        "眼神", "语气", "口吻", "模样", "样子", "忽然", "依然", "仍然", "依旧",
+        "似乎", "好像", "显然", "果然", "竟然", "居然", "几乎", "心中", "心底",
+        "一旁", "身旁", "身边", "半晌", "良久", "许久", "片刻", "一时", "此时",
+        "此刻", "眼前", "脑海", "胸口", "心口", "一下", "小心翼翼",
+        "蹑手蹑脚", "恍恍惚惚", "隐隐约约", "清清楚楚", "一五一十",
+        // 《剑来》第二轮扫描补充
+        "突然", "无奈", "感慨", "疑惑", "犹豫", "迟疑", "沉吟", "认真", "严肃",
+        "郑重", "敷衍", "苦笑", "大笑", "微笑", "冷笑", "轻笑", "失笑", "调侃",
+        "揶揄", "打趣", "解释", "回答", "回应", "附和", "接话", "插话", "起身",
+        "自言自语", "自顾自", "自嘲", "忍不住", "不由得", "不禁", "想了想",
+        "琢磨", "考虑", "继续", "试探", "没好气", "气鼓鼓", "不耐烦",
+        "不紧不慢", "似笑非笑", "一本正经", "半信半疑", "欲言又止",
+        "意味深长", "语重心长", "郑重其事", "若有所思", "不动声色", "神兽"
+    )
+
+    /**
+     * 候选是否像人名：长度/首末字/黑名单/叠字（喃喃、缓缓）多重校验
+     */
+    private fun validateName(token: String): String? {
+        if (token.length !in 2..4) return null
+        if (token.any { it == '说' || it == '道' || it == '喊' || it == '吼' }) return null
+        if (token.first() in nameStopFirstChars) return null
+        if (token.last() in nameStopLastChars) return null
+        if (token.any { it in nameStopAnyChars }) return null
+        if (token.contains('完') || token.contains('着')) return null
+        if (token.length == 2 && token[0] == token[1]) return null
+        // AABB 叠词（小心翼翼/隐隐约约/心翼翼…）
+        if (token.length == 4 && (token[0] == token[1] || token[2] == token[3])) return null
+        if (nameBlacklist.any { token.contains(it) }) return null
+        return token
     }
 
     private fun resolveGender(beforeQuote: String, speaker: String, last: Gender): Gender {
@@ -438,9 +540,11 @@ object RuleEngine {
     }
 
     /**
-     * 将连续过短的旁白合并，减少引擎换音色次数
+     * 合并连续旁白，减少引擎换音色次数。
+     * 旁白之间一律续写（"满天花雨"/"声。"这类被强调引号切碎的片段重新拼回），
+     * 只有紧邻对白时才必须切段
      */
-    private fun mergeShortNarration(list: List<Utterance>, minLen: Int = 8): List<Utterance> {
+    private fun mergeShortNarration(list: List<Utterance>): List<Utterance> {
         if (list.size <= 1) return list
         val out = mutableListOf<Utterance>()
         val buf = StringBuilder()
@@ -452,9 +556,7 @@ object RuleEngine {
         }
         for (u in list) {
             if (!u.isQuote && u.speaker == Utterance.SPEAKER_NARRATOR) {
-                if (buf.isEmpty()) buf.append(u.text)
-                else buf.append(u.text)
-                if (buf.length >= minLen) flush()
+                buf.append(u.text)
             } else {
                 flush()
                 out.add(u)
