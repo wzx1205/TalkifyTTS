@@ -391,7 +391,19 @@ class LocalModelProvider : AbstractTtsProvider() {
                     ?.takeIf { it in localVoiceIds } ?: (plan.voiceId ?: fallbackVoiceId)
                 else -> plan.voiceId ?: fallbackVoiceId
             }
-            val voice = resolveVoice(requestedVoice, modelInfo)
+            // 相邻对白防撞：不同角色连续对话时在同性别音色池内轮转
+            var utteranceVoice = requestedVoice
+            if (RoleVoiceRouter.collidesWithPrevious(u.speaker, utteranceVoice)) {
+                val pool = if (utteranceVoice.startsWith("zh_female")) {
+                    com.github.lonepheasantwarrior.talkify.book.store.VoiceAutoAssign.FEMALE_POOL
+                } else {
+                    com.github.lonepheasantwarrior.talkify.book.store.VoiceAutoAssign.MALE_POOL
+                }
+                val idx = pool.indexOf(utteranceVoice)
+                if (idx >= 0) utteranceVoice = pool[(idx + 1) % pool.size]
+            }
+            RoleVoiceRouter.registerSpoken(u.speaker, utteranceVoice)
+            val voice = resolveVoice(utteranceVoice, modelInfo)
             val reference = loadReference(modelInfo, modelDir, voice)
             val speed = (baseSpeed * plan.speedMultiplier).coerceIn(0.5f, 2.0f)
             logInfo(

@@ -50,6 +50,14 @@ class XiaomiProvider : HttpStreamingTtsProvider() {
             "female2" to "冰糖"
         )
 
+        /** 相邻对白防撞的备用声线（MiMo 中文预置男女各只有 2 个） */
+        private val ALTERNATE_VOICES = mapOf(
+            "苏打" to "白桦",
+            "白桦" to "苏打",
+            "茉莉" to "冰糖",
+            "冰糖" to "茉莉"
+        )
+
         /** 情感标签 → MiMo 风格指令（user role 自然语言） */
         private val EMOTION_STYLES = mapOf(
             "CALM" to "",
@@ -136,7 +144,15 @@ class XiaomiProvider : HttpStreamingTtsProvider() {
                         com.github.lonepheasantwarrior.talkify.book.store.CharacterBookStore.activeGenderFor(u.speaker)
                     } else null
                     val slot = com.github.lonepheasantwarrior.talkify.book.router.RoleVoiceRouter.slotFor(u, genderHint)
-                    val voice = resolveBookVoice(u, slot)
+                    var voice = resolveBookVoice(u, slot)
+                    // 相邻对白防撞：不同角色连续对话时换备用声线（苏打↔白桦/茉莉↔冰糖）
+                    if (com.github.lonepheasantwarrior.talkify.book.router.RoleVoiceRouter
+                            .collidesWithPrevious(u.speaker, voice)
+                    ) {
+                        voice = ALTERNATE_VOICES[voice] ?: voice
+                    }
+                    com.github.lonepheasantwarrior.talkify.book.router.RoleVoiceRouter
+                        .registerSpoken(u.speaker, voice)
                     val style = buildStyleInstruction(u)
                     val utteranceConfig = config.copy(voiceId = voice, styleInstruction = style)
                     logDebug(

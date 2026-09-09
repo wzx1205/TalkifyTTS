@@ -76,6 +76,17 @@ class ReconstructionCoverageTest {
     }
 
     @Test
+    fun `反问道提示语不吞`() {
+        // 《剑来》实录：「顾璨反问道：」——「反问」曾在动词表外，
+        // 反被吞进人名导致整段剥离
+        val utterances = RuleEngine.analyze("顾璨反问道：“万一呢？何必呢？”")
+        assertEquals(1, utterances.size)
+        assertTrue(utterances[0].isQuote)
+        assertEquals("顾璨", utterances[0].speaker)
+        checkCoverage("顾璨反问道：“万一呢？何必呢？”", droppable = listOf("顾璨反问道："))
+    }
+
+    @Test
     fun `带动作描写的提示语不得剥离`() {
         // 《剑来》听书实录丢字：叹气/咬牙类语气描写必须保留
         checkCoverage("裴钱叹了口气道：“来了来了。”")

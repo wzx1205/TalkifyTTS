@@ -5,10 +5,21 @@ import com.github.lonepheasantwarrior.talkify.book.model.EmotionTag
 import com.github.lonepheasantwarrior.talkify.book.model.Gender
 import com.github.lonepheasantwarrior.talkify.book.model.Utterance
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 class RoleVoiceRouterTest {
+
+    @Test
+    fun `相邻对白不同角色不撞声线`() {
+        RoleVoiceRouter.resetSession()
+        // 两个男角色撞到同一槽位声线时，后者应被判定为碰撞
+        RoleVoiceRouter.registerSpoken("陈灵均", "苏打")
+        assertTrue(RoleVoiceRouter.collidesWithPrevious("魏檗", "苏打"))
+        assertTrue(!RoleVoiceRouter.collidesWithPrevious("陈灵均", "苏打")) // 同角色续说不算撞
+        assertTrue(!RoleVoiceRouter.collidesWithPrevious("魏檗", "白桦")) // 换了声线不算撞
+    }
 
     @Test
     fun `性别提示修正槽位`() {

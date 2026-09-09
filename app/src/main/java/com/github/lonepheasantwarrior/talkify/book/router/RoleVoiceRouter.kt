@@ -32,10 +32,34 @@ object RoleVoiceRouter {
     private var maleAssignCount = 0
     private var femaleAssignCount = 0
 
+    /** 上一句对白的（说话人, 音色）：相邻对白防撞声线 */
+    private var lastQuoteSpeaker: String? = null
+    private var lastQuoteVoice: String? = null
+
+    /**
+     * 相邻对白防撞：上一句不同角色刚用过同一音色时返回 true，
+     * 调用方应换备用声线，避免两个男生对手戏连续同声线
+     */
+    fun collidesWithPrevious(speaker: String, voiceId: String?): Boolean {
+        return voiceId != null &&
+            lastQuoteSpeaker != null &&
+            lastQuoteSpeaker != speaker &&
+            lastQuoteVoice == voiceId
+    }
+
+    /** 记录本句实际使用的音色（防撞基准） */
+    fun registerSpoken(speaker: String, voiceId: String?) {
+        if (voiceId == null) return
+        lastQuoteSpeaker = speaker
+        lastQuoteVoice = voiceId
+    }
+
     fun resetSession() {
         speakerSlot.clear()
         maleAssignCount = 0
         femaleAssignCount = 0
+        lastQuoteSpeaker = null
+        lastQuoteVoice = null
     }
 
     fun resolve(utterance: Utterance, fallbackVoiceId: String?): VoicePlan {
