@@ -383,7 +383,8 @@ object RuleEngine {
         '头', '言', '语', '气', '看', '望', '感', '惊', '愣', '立', '坐', '步', '吟', '嘲',
         '劝', '慰', '骂', '嚷', '至', '过', '住', '开', '手', '眼', '心',
         '摇', '皱', '抬', '垂', '俯', '仰', '瞪', '瞥', '瞄', '眨', '撇', '咧',
-        '抿', '挥', '摆', '搂', '抱', '扯', '推', '拍', '敲', '指', '自'
+        '抿', '挥', '摆', '搂', '抱', '扯', '推', '拍', '敲', '指', '自',
+        '叨', '恼', '没', '眉', '脸', '喃', '嘟'
     )
 
     /** 名字首字不能是这些（虚词/介词/副词，几乎不入名） */
@@ -438,8 +439,9 @@ object RuleEngine {
         if (token.any { it in nameStopAnyChars }) return null
         if (token.contains('完') || token.contains('着')) return null
         if (token.length == 2 && token[0] == token[1]) return null
-        // AABB 叠词（小心翼翼/隐隐约约/心翼翼…）
+        // AABB 叠词（小心翼翼/隐隐约约/心翼翼…）与 ABB 尾叠词（怯生生/慢腾腾…）
         if (token.length == 4 && (token[0] == token[1] || token[2] == token[3])) return null
+        if (token.length == 3 && token[1] == token[2]) return null
         if (nameBlacklist.any { token.contains(it) }) return null
         return token
     }

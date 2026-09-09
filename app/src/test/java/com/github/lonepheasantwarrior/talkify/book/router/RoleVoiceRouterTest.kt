@@ -1,5 +1,6 @@
 package com.github.lonepheasantwarrior.talkify.book.router
 
+import com.github.lonepheasantwarrior.talkify.book.config.BookTtsSettings
 import com.github.lonepheasantwarrior.talkify.book.model.EmotionTag
 import com.github.lonepheasantwarrior.talkify.book.model.Gender
 import com.github.lonepheasantwarrior.talkify.book.model.Utterance
@@ -8,6 +9,17 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 class RoleVoiceRouterTest {
+
+    @Test
+    fun `性别提示修正槽位`() {
+        // 《剑来》实录：裴钱逐句窗口无线索(UNKNOWN)，需角色册全书投票性别补正
+        RoleVoiceRouter.resetSession()
+        val u = Utterance(text = "测试。", isQuote = true, speaker = "裴钱", gender = Gender.UNKNOWN)
+        val slot = RoleVoiceRouter.slotFor(u, Gender.FEMALE)
+        assertEquals(BookTtsSettings.ROLE_FEMALE, slot)
+        // 同一说话人稳定复用槽位
+        assertEquals(slot, RoleVoiceRouter.slotFor(u.copy(), Gender.FEMALE))
+    }
 
     private fun quote(speaker: String, gender: Gender = Gender.MALE) = Utterance(
         text = "测试对白。",

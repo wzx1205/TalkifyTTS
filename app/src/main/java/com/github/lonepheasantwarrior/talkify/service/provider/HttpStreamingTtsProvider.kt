@@ -83,7 +83,9 @@ abstract class HttpStreamingTtsProvider : AbstractTtsProvider() {
     @Volatile
     private var isFirstChunk = true
 
-    final override fun synthesize(
+    // 不设 final：子类（如小米 MiMo 多角色听书）可拦截合成入口做按句改写，
+    // 普通路径 super.synthesize(...) 仍复用基类分块流水线
+    override fun synthesize(
         text: String,
         params: SynthesisParams,
         config: BaseProviderConfig,

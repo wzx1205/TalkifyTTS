@@ -38,6 +38,18 @@ object CharacterBookStore {
         return load(id)?.voiceFor(name)
     }
 
+    /** 当前生效书的旁白声线；无生效书/未设置返回 null */
+    fun activeNarratorVoice(): String? {
+        val id = activeBookId() ?: return null
+        return load(id)?.narratorVoiceId?.takeIf { it.isNotBlank() }
+    }
+
+    /** 当前生效书里某角色的全书扫描性别；无生效书/无绑定返回 null */
+    fun activeGenderFor(name: String): Gender? {
+        val id = activeBookId() ?: return null
+        return load(id)?.characters?.firstOrNull { it.name == name }?.gender
+    }
+
     fun activeBookId(): String? {
         val ctx = TalkifyAppHolder.getContext() ?: return null
         val prefs = ctx.getSharedPreferences("talkify_book_tts", 0)
@@ -60,6 +72,7 @@ object CharacterBookStore {
         val json = JSONObject().apply {
             put("bookId", book.bookId)
             put("title", book.title)
+            put("narratorVoiceId", book.narratorVoiceId)
             put("characters", JSONArray().apply {
                 book.characters.forEach { c ->
                     put(JSONObject().apply {
@@ -98,7 +111,8 @@ object CharacterBookStore {
             CharacterBook(
                 bookId = json.getString("bookId"),
                 title = json.optString("title", ""),
-                characters = chars
+                characters = chars,
+                narratorVoiceId = json.optString("narratorVoiceId", "")
             )
         } catch (_: Exception) {
             null
@@ -124,5 +138,11 @@ object CharacterBookStore {
             if (it.name == characterName) it.copy(voiceId = voiceId) else it
         }
         save(book.copy(characters = updated))
+    }
+
+    /** 更新旁白声线（UI 手动调整） */
+    fun updateNarratorVoice(bookId: String, voiceId: String) {
+        val book = load(bookId) ?: return
+        save(book.copy(narratorVoiceId = voiceId))
     }
 }

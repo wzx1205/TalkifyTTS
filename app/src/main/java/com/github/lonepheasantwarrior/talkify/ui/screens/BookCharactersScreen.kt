@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Male
 import androidx.compose.material.icons.filled.Female
 import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -84,7 +85,19 @@ fun BookCharactersScreen(
     var scanning by remember { mutableStateOf(false) }
     var expandedVoiceFor by remember { mutableStateOf<String?>(null) }
 
-    val bundledVoices = remember { LocalVoiceCatalog.getVoices() }
+    val bundledVoices = remember {
+        // 本地 ZipVoice 内置音色 + MiMo 预置音色，供跨供应商绑定
+        // （运行时按当前供应商的音色表校验，不属于该表的绑定自动回退槽位）
+        val local = LocalVoiceCatalog.getVoices().map {
+            it.voiceId to "本地·${it.displayName}"
+        }
+        val mimo = runCatching {
+            com.github.lonepheasantwarrior.talkify.infrastructure.xml.VoiceXmlParser.parse(
+                context, com.github.lonepheasantwarrior.talkify.R.xml.xiaomi_mimo_voices_v2p5
+            ).map { it.id to "MiMo·${it.displayName}" }
+        }.getOrDefault(emptyList())
+        local + mimo
+    }
 
     val importLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -216,11 +229,15 @@ fun BookCharactersScreen(
             } else {
                 CharacterList(
                     book = current,
-                    bundledVoices = bundledVoices.map { it.voiceId to it.displayName },
+                    bundledVoices = bundledVoices,
                     expandedVoiceFor = expandedVoiceFor,
                     onExpandToggle = { expandedVoiceFor = if (expandedVoiceFor == it) null else it },
                     onVoicePicked = { name, voiceId ->
                         CharacterBookStore.updateVoice(current.bookId, name, voiceId)
+                        books = CharacterBookStore.list()
+                    },
+                    onNarratorVoicePicked = { voiceId ->
+                        CharacterBookStore.updateNarratorVoice(current.bookId, voiceId)
                         books = CharacterBookStore.list()
                     },
                     onAutoAssign = {
@@ -250,9 +267,9 @@ private fun CharacterList(
     expandedVoiceFor: String?,
     onExpandToggle: (String) -> Unit,
     onVoicePicked: (String, String) -> Unit,
+    onNarratorVoicePicked: (String) -> Unit,
     onAutoAssign: () -> Unit
 ) {
-    LaunchedEffect(Unit) { /* 占位：保持结构对称 */ }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -264,6 +281,70 @@ private fun CharacterList(
             ) {
                 IconButton(onClick = onAutoAssign) {
                     Icon(Icons.Filled.AutoFixHigh, contentDescription = stringResource(R.string.book_characters_auto_assign))
+                }
+            }
+        }
+        // 旁白置顶：角色再多也能一眼找到
+        item(key = "__narrator__") {
+            val narratorVoice = book.narratorVoiceId.ifBlank {
+                bundledVoices.firstOrNull { it.first == "narrator" }?.second ?: ""
+            }
+            val narratorDisplay = bundledVoices.firstOrNull { it.first == book.narratorVoiceId }?.second
+                ?: narratorVoice
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                ),
+                shape = MaterialTheme.shapes.large
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onExpandToggle("__narrator__") }
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Campaign,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.book_characters_narrator),
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Text(
+                            text = stringResource(R.string.book_characters_narrator_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1
+                        )
+                    }
+                    Text(
+                        text = narratorDisplay,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Box {
+                        DropdownMenu(
+                            expanded = expandedVoiceFor == "__narrator__",
+                            onDismissRequest = { onExpandToggle("__narrator__") }
+                        ) {
+                            bundledVoices.forEach { (id, name) ->
+                                DropdownMenuItem(
+                                    text = { Text(name) },
+                                    onClick = {
+                                        onNarratorVoicePicked(id)
+                                        onExpandToggle("__narrator__")
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

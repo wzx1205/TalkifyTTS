@@ -172,7 +172,7 @@
 
     <!-- 多角色听书（本地模型） -->
     <string name="book_mode_title">多角色听书</string>
-    <string name="book_mode_hint">自动识别对白/旁白与性别，按角色切换声线（仅本地模型）</string>
+    <string name="book_mode_hint">自动识别对白/旁白与性别，按角色切换声线（本地模型 / 小米 MiMo）</string>
     <string name="book_characters_manage">管理角色 ›</string>
 
     <!-- 听书角色册 -->
@@ -183,6 +183,8 @@
     <string name="book_characters_auto_assign">按对白量自动分配声音</string>
     <string name="book_characters_delete">删除</string>
     <string name="book_characters_dialogue_format">%1$d 句对白</string>
+    <string name="book_characters_narrator">旁白</string>
+    <string name="book_characters_narrator_hint">非对白文本统一使用旁白声线</string>
 
     <!-- 打赏功能 -->
     <string name="donate_title">选择打赏方式</string>

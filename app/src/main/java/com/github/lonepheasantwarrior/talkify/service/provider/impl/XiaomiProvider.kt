@@ -14,11 +14,16 @@ import com.github.lonepheasantwarrior.talkify.service.provider.toMaskedString
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.concurrent.TimeUnit
+import com.github.lonepheasantwarrior.talkify.service.provider.TtsErrorMessages
 
 /**
  * 小米 - MiMo 语音合成供应商实现
@@ -35,6 +40,37 @@ class XiaomiProvider : HttpStreamingTtsProvider() {
 
     companion object {
         const val DEFAULT_API_URL = "https://api.xiaomimimo.com/v1/chat/completions"
+
+        /** 多角色槽位 → MiMo 预置音色（旁白可被角色册旁白绑定覆盖） */
+        private val SLOT_VOICES = mapOf(
+            "narrator" to "冰糖",
+            "male" to "苏打",
+            "female" to "茉莉",
+            "male2" to "白桦",
+            "female2" to "冰糖"
+        )
+
+        /** 情感标签 → MiMo 风格指令（user role 自然语言） */
+        private val EMOTION_STYLES = mapOf(
+            "CALM" to "",
+            "JOY" to "用欢快喜悦、明亮的语气",
+            "ANGER" to "用愤怒严厉、压抑着怒火的语气",
+            "SADNESS" to "用悲伤低沉、带一点哽咽的语气",
+            "FEAR" to "用恐惧颤抖、气声很重的语气",
+            "SURPRISE" to "用惊讶上扬、难以置信的语气"
+        )
+
+        /** 多角色开关全局唯一；启用后逐句合成 */
+        private val bookModeEnabled: Boolean
+            get() = com.github.lonepheasantwarrior.talkify.book.config.BookTtsSettings.isEnabled()
+    }
+
+    /** 多角色逐句合成用的独立客户端（基类连接池为私有） */
+    private val bookClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS)
+            .build()
     }
 
     override val chunkMaxLength: Int = 768
@@ -61,6 +97,103 @@ class XiaomiProvider : HttpStreamingTtsProvider() {
     override fun getDefaultModelId(): String = ProviderIds.Xiaomi.defaultModelId
 
     override fun getAudioConfig(): AudioConfig = AudioConfig.XIAOMI_MIMO_TTS
+
+    /**
+     * 多角色听书：开关开启且文本含对白时，按句分析 → 角色槽位/角色册绑定
+     * 选音色 → 情感标签转风格指令（user role），逐句请求 MiMo。
+     * 其余情况走基类分块流水线（单音色）。
+     */
+    override fun synthesize(
+        text: String,
+        params: SynthesisParams,
+        config: BaseProviderConfig,
+        listener: TtsSynthesisListener
+    ) {
+        if (!bookModeEnabled || config !is XiaomiConfig) {
+            super.synthesize(text, params, config, listener)
+            return
+        }
+        val utterances = try {
+            com.github.lonepheasantwarrior.talkify.book.pipeline.DialogueAnalyzer.analyze(text)
+        } catch (e: Exception) {
+            logWarning("Dialogue analysis failed, fallback single voice: ${e.message}")
+            emptyList()
+        }
+        if (utterances.isEmpty()) {
+            super.synthesize(text, params, config, listener)
+            return
+        }
+
+        logInfo("Book multi-role over MiMo: ${utterances.size} utterances")
+        isCancelled = false
+
+        providerScope.launch {
+            try {
+                for ((index, u) in utterances.withIndex()) {
+                    if (isCancelled) return@launch
+                    // 逐句窗口线索缺失时，用角色册全书投票性别补正槽位
+                    val genderHint = if (u.gender == com.github.lonepheasantwarrior.talkify.book.model.Gender.UNKNOWN) {
+                        com.github.lonepheasantwarrior.talkify.book.store.CharacterBookStore.activeGenderFor(u.speaker)
+                    } else null
+                    val slot = com.github.lonepheasantwarrior.talkify.book.router.RoleVoiceRouter.slotFor(u, genderHint)
+                    val voice = resolveBookVoice(u, slot)
+                    val style = buildStyleInstruction(u)
+                    val utteranceConfig = config.copy(voiceId = voice, styleInstruction = style)
+                    logDebug(
+                        "Book utterance #$index speaker=${u.speaker} slot=$slot voice=$voice " +
+                            "emotion=${u.emotion} text=${u.text.take(16)}"
+                    )
+
+                    val request = buildHttpRequest(u.text, utteranceConfig, params)
+                    val ok = bookClient.newCall(request).execute().use { resp ->
+                        if (!resp.isSuccessful) {
+                            val errorBody = resp.body?.string() ?: ""
+                            logError("HTTP ${resp.code}: $errorBody")
+                            withContext(Dispatchers.Main) {
+                                listener.onError(mapHttpError(errorBody))
+                            }
+                            false
+                        } else {
+                            processStreamResponse(resp, index, utteranceConfig, params, listener)
+                        }
+                    }
+                    if (!ok || isCancelled) return@launch
+                }
+                if (!isCancelled) {
+                    withContext(Dispatchers.Main) {
+                        listener.onSynthesisCompleted()
+                    }
+                }
+            } catch (e: Exception) {
+                if (!isCancelled && e !is kotlinx.coroutines.CancellationException) {
+                    logError("Book synthesis error", e)
+                    withContext(Dispatchers.Main) {
+                        listener.onError(TtsErrorMessages.synthesisFailed())
+                    }
+                }
+            }
+        }
+    }
+
+    /** 旁白/角色 → MiMo 音色：角色册绑定（属于 MiMo 音色表时）优先，槽位默认兜底 */
+    private fun resolveBookVoice(
+        u: com.github.lonepheasantwarrior.talkify.book.model.Utterance,
+        slot: String
+    ): String {
+        if (!u.isQuote || u.speaker == com.github.lonepheasantwarrior.talkify.book.model.Utterance.SPEAKER_NARRATOR) {
+            return com.github.lonepheasantwarrior.talkify.book.store.CharacterBookStore
+                .activeNarratorVoice()?.takeIf { it in voiceIds }
+                ?: SLOT_VOICES[slot] ?: fallbackVoiceId
+        }
+        return com.github.lonepheasantwarrior.talkify.book.store.CharacterBookStore
+            .activeVoiceFor(u.speaker)?.takeIf { it in voiceIds }
+            ?: SLOT_VOICES[slot] ?: fallbackVoiceId
+    }
+
+    /** 情感标签 → MiMo 风格指令；平静/旁白不加指令，保持原生听感 */
+    private fun buildStyleInstruction(
+        u: com.github.lonepheasantwarrior.talkify.book.model.Utterance
+    ): String = EMOTION_STYLES[u.emotion.name].orEmpty()
 
     override fun validateConfig(config: BaseProviderConfig): String? {
         if (config !is XiaomiConfig) {

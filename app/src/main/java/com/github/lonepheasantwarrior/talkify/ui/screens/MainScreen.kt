@@ -407,7 +407,9 @@ fun MainScreen(
                             modifier = Modifier.fillMaxWidth()
                         )
 
-                        if (currentProvider.id == ProviderIds.LocalModel.providerId) {
+                        val isBookCapableProvider = currentProvider.id == ProviderIds.LocalModel.providerId ||
+                            currentProvider.id == ProviderIds.Xiaomi.providerId
+                        if (isBookCapableProvider) {
                             var bookModeEnabled by remember {
                                 mutableStateOf(BookTtsSettings.isEnabled())
                             }

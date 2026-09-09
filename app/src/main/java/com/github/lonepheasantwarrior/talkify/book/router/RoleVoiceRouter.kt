@@ -50,6 +50,40 @@ object RoleVoiceRouter {
         return VoicePlan(voiceId = voiceId, speedMultiplier = speed)
     }
 
+    /**
+     * 解析角色所属槽位（narrator/male/female/male2/female2）。
+     *
+     * 供非 ZipVoice 供应商把槽位映射到自己的音色表：
+     * 槽位分配与 [resolve] 共用同一映射，保证两套引擎下同一角色稳定。
+     *
+     * @param genderHint 逐句窗口线索缺失时的性别补充（角色册全书投票性别）
+     */
+    fun slotFor(utterance: Utterance, genderHint: Gender? = null): String {
+        if (speakerSlot.size > 64) {
+            speakerSlot.clear()
+            maleAssignCount = 0
+            femaleAssignCount = 0
+        }
+        if (!utterance.isQuote || utterance.speaker == Utterance.SPEAKER_NARRATOR) {
+            return BookTtsSettings.ROLE_NARRATOR
+        }
+        val effectiveGender = utterance.gender.takeIf { it != Gender.UNKNOWN } ?: genderHint
+        return speakerSlot.getOrPut(utterance.speaker) {
+            when (effectiveGender) {
+                Gender.FEMALE -> {
+                    val s = if (femaleAssignCount == 0) BookTtsSettings.ROLE_FEMALE else BookTtsSettings.ROLE_FEMALE2
+                    femaleAssignCount++
+                    s
+                }
+                Gender.MALE, Gender.UNKNOWN, null -> {
+                    val s = if (maleAssignCount == 0) BookTtsSettings.ROLE_MALE else BookTtsSettings.ROLE_MALE2
+                    maleAssignCount++
+                    s
+                }
+            }
+        }
+    }
+
     private fun resolveVoiceId(utterance: Utterance, fallbackVoiceId: String?): String? {
         if (!utterance.isQuote || utterance.speaker == Utterance.SPEAKER_NARRATOR) {
             return BookTtsSettings.voiceForRole(BookTtsSettings.ROLE_NARRATOR) ?: fallbackVoiceId

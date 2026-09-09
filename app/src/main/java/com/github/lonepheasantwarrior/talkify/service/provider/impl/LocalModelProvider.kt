@@ -7,6 +7,7 @@ import com.github.lonepheasantwarrior.talkify.R
 import com.github.lonepheasantwarrior.talkify.TalkifyAppHolder
 import com.github.lonepheasantwarrior.talkify.book.config.BookTtsSettings
 import com.github.lonepheasantwarrior.talkify.book.pipeline.DialogueAnalyzer
+import com.github.lonepheasantwarrior.talkify.book.model.Utterance
 import com.github.lonepheasantwarrior.talkify.book.router.RoleVoiceRouter
 import com.github.lonepheasantwarrior.talkify.book.store.CharacterBookStore
 import com.github.lonepheasantwarrior.talkify.domain.model.BaseProviderConfig
@@ -375,10 +376,22 @@ class LocalModelProvider : AbstractTtsProvider() {
         }
 
         logInfo("Book multi-role: ${utterances.size} utterances")
+        val localVoiceIds = LocalVoiceCatalog.getVoices().map { it.voiceId }.toSet()
         for (u in utterances) {
             if (isCancelled) return
             val plan = RoleVoiceRouter.resolve(u, fallbackVoiceId)
-            val voice = resolveVoice(plan.voiceId ?: fallbackVoiceId, modelInfo)
+            // 旁白：角色册的旁白绑定（若属于本模型音色表）优先于全局角色设置
+            val isNarration = !u.isQuote || u.speaker == Utterance.SPEAKER_NARRATOR
+            val narratorBinding = if (isNarration) {
+                CharacterBookStore.activeNarratorVoice()?.takeIf { it in localVoiceIds }
+            } else null
+            val requestedVoice = when {
+                isNarration && narratorBinding != null -> narratorBinding
+                !isNarration -> CharacterBookStore.activeVoiceFor(u.speaker)
+                    ?.takeIf { it in localVoiceIds } ?: (plan.voiceId ?: fallbackVoiceId)
+                else -> plan.voiceId ?: fallbackVoiceId
+            }
+            val voice = resolveVoice(requestedVoice, modelInfo)
             val reference = loadReference(modelInfo, modelDir, voice)
             val speed = (baseSpeed * plan.speedMultiplier).coerceIn(0.5f, 2.0f)
             logInfo(
