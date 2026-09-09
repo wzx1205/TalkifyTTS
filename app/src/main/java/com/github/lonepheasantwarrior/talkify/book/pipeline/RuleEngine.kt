@@ -393,7 +393,8 @@ object RuleEngine {
         '听', '走', '站', '立', '坐', '回', '进', '刚', '翻', '拉', '不', '很', '太', '真',
         '更', '最', '挺', '稍', '略', '以', '便', '才', '连', '被', '把', '向', '往', '从',
         '即', '是', '则', '却', '竟', '乃', '这', '那', '其', '之', '与', '和', '同', '跟',
-        '没', '在', '于', '给', '让', '使', '虽', '但', '只', '未', '别', '然'
+        '没', '在', '于', '给', '让', '使', '虽', '但', '只', '未', '别', '然',
+        '他', '她', '它', '我', '你'
     )
 
     /** 候选含这些字多为拟声/语气词，不是人名 */
@@ -437,7 +438,7 @@ object RuleEngine {
         if (token.first() in nameStopFirstChars) return null
         if (token.last() in nameStopLastChars) return null
         if (token.any { it in nameStopAnyChars }) return null
-        if (token.contains('完') || token.contains('着')) return null
+        if (token.contains('完') || token.contains('着') || token.contains('的') || token.contains('之')) return null
         if (token.length == 2 && token[0] == token[1]) return null
         // AABB 叠词（小心翼翼/隐隐约约/心翼翼…）与 ABB 尾叠词（怯生生/慢腾腾…）
         if (token.length == 4 && (token[0] == token[1] || token[2] == token[3])) return null
@@ -506,9 +507,10 @@ object RuleEngine {
         return best.key to intensity
     }
 
-    /** 整段都是「主语+说/道动词+冒号」的纯提示语，如「林风低声道：」；主语限 6 字防误吞长节拍 */
+    /** 整段都是「主语+说/道动词+冒号」的纯提示语，如「林风低声道：」。
+     *  主语懒惰匹配：动词取最长（低声道），主语取最短（林风） */
     private val pureAttributionHead = Regex(
-        "^[\\u4e00-\\u9fa5A-Za-z0-9]{1,6}(?:${speechVerbs.joinToString("|")})[：:]\\s*$"
+        "^([\\u4e00-\\u9fa5A-Za-z0-9]{1,6}?)(?:${speechVerbs.joinToString("|")})[：:]\\s*$"
     )
 
     /** 引号后短提示尾允许的动词：排除单字 笑/叹/哭/想 等可重叠的动作词（笑了笑/想了想） */
@@ -518,15 +520,26 @@ object RuleEngine {
 
     /** 引号后紧跟的短提示尾，如「他说。」「林风问道！」 */
     private val pureAttributionTail = Regex(
-        "^[\\u4e00-\\u9fa5A-Za-z0-9]{0,3}(?:${tailStripVerbs.joinToString("|")})[。！？!?…\\s]*$"
+        "^([\\u4e00-\\u9fa5A-Za-z0-9]{0,3})(?:${tailStripVerbs.joinToString("|")})[。！？!?…\\s]*$"
     )
 
+    private val pronouns = setOf("他", "她", "它", "我", "你", "两人", "众人")
+
     private fun stripSpeechAttribution(segment: String): String {
-        // 只剥离「整段就是提示语」的情况；部分匹配会吞掉正常旁白文字
-        // （如「她心里叹息一声又想：」里的「她心里叹」曾被误删）
+        // 剥离纯提示语的前提：主语是代词或人名。
+        // 「裴钱叹了口气道：」「他咬咬牙道：」这类主语带动作/语气描写的，
+        // 描述本身是用户要听的语气文本，一律保留
         val s = segment.trim()
-        if (pureAttributionHead.matches(s)) return ""
-        if (pureAttributionTail.matches(s)) return ""
+        pureAttributionHead.matchEntire(s)?.let { m ->
+            val subject = m.groupValues[1]
+            if (subject in pronouns || validateName(subject) != null) return ""
+            return s
+        }
+        pureAttributionTail.matchEntire(s)?.let { m ->
+            val subject = m.groupValues[1]
+            if (subject.isEmpty() || subject in pronouns || validateName(subject) != null) return ""
+            return s
+        }
         return s
     }
 
