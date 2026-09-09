@@ -69,6 +69,7 @@ import com.github.lonepheasantwarrior.talkify.R
 import com.github.lonepheasantwarrior.talkify.book.config.BookTtsSettings
 import com.github.lonepheasantwarrior.talkify.domain.model.AliyunBailianConfig
 import com.github.lonepheasantwarrior.talkify.domain.model.AzureConfig
+import com.github.lonepheasantwarrior.talkify.domain.model.HybridConfig
 import com.github.lonepheasantwarrior.talkify.domain.model.LocalModelConfig
 import com.github.lonepheasantwarrior.talkify.domain.model.LocalModelRegistry
 import com.github.lonepheasantwarrior.talkify.domain.model.MiniMaxConfig
@@ -408,7 +409,8 @@ fun MainScreen(
                         )
 
                         val isBookCapableProvider = currentProvider.id == ProviderIds.LocalModel.providerId ||
-                            currentProvider.id == ProviderIds.Xiaomi.providerId
+                            currentProvider.id == ProviderIds.Xiaomi.providerId ||
+                            currentProvider.id == ProviderIds.Hybrid.providerId
                         if (isBookCapableProvider) {
                             var bookModeEnabled by remember {
                                 mutableStateOf(BookTtsSettings.isEnabled())
@@ -499,6 +501,10 @@ fun MainScreen(
                                         val lmConfig = savedConfig as? LocalModelConfig ?: LocalModelConfig()
                                         lmConfig.copy(voiceId = selectedVoice?.voiceId ?: lmConfig.voiceId)
                                     }
+                                    is HybridConfig -> {
+                                        val hbConfig = savedConfig as? HybridConfig ?: HybridConfig()
+                                        hbConfig.copy(voiceId = selectedVoice?.voiceId ?: hbConfig.voiceId)
+                                    }
                                     else -> savedConfig
                                 }
 
@@ -512,6 +518,7 @@ fun MainScreen(
                                     is XiaomiConfig -> config.apiKey.isNotBlank()
                                     is MiniMaxConfig -> config.apiKey.isNotBlank()
                                     is LocalModelConfig -> config.modelId.isNotBlank() && LocalModelManager.isModelDownloaded(config.modelId)
+                                    is HybridConfig -> true
                                     else -> false
                                 }
 

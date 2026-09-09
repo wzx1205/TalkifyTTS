@@ -75,6 +75,15 @@ sealed class ProviderIds {
     }
 
     /**
+     * 混合引擎 - MiMo 念旁白 + Edge 免费音色念角色
+     */
+    data object Hybrid : ProviderIds() {
+        override val providerId: String = "hybrid"
+        override val defaultModelId: String = "mimo+edge"
+        override val provider: String = "MiMo+Edge 混合"
+    }
+
+    /**
      * 供应商唯一标识符，用于内部路由、注册表 key 和持久化键。
      */
     abstract val providerId: String
@@ -94,7 +103,7 @@ sealed class ProviderIds {
          * 获取所有定义的供应商 ID 列表
          */
         val entries: List<ProviderIds> by lazy {
-            listOf(Azure, Volcengine, TencentCloud, AliyunBailian, Xiaomi, MiniMax, LocalModel)
+            listOf(Azure, Volcengine, TencentCloud, AliyunBailian, Xiaomi, MiniMax, LocalModel, Hybrid)
         }
     }
 }

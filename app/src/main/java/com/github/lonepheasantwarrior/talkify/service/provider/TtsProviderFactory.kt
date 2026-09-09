@@ -10,6 +10,8 @@ import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.Azure
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.AzureVoiceRepository
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.LocalModelConfigRepository
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.LocalModelVoiceRepository
+import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.HybridConfigRepository
+import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.HybridVoiceRepository
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.MiniMaxConfigRepository
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.MiniMaxVoiceRepository
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.TencentCloudConfigRepository
@@ -21,6 +23,7 @@ import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.Xiaom
 import com.github.lonepheasantwarrior.talkify.service.TtsLogger
 import com.github.lonepheasantwarrior.talkify.service.provider.impl.AliyunBailianProvider
 import com.github.lonepheasantwarrior.talkify.service.provider.impl.AzureProvider
+import com.github.lonepheasantwarrior.talkify.service.provider.impl.HybridProvider
 import com.github.lonepheasantwarrior.talkify.service.provider.impl.LocalModelProvider
 import com.github.lonepheasantwarrior.talkify.service.provider.impl.MiniMaxProvider
 import com.github.lonepheasantwarrior.talkify.service.provider.impl.TencentCloudProvider
@@ -141,6 +144,11 @@ object TtsProviderFactory {
                 providerFactory = { LocalModelProvider() },
                 createConfigRepo = { ctx -> LocalModelConfigRepository(ctx) },
                 createVoiceRepo = { ctx -> LocalModelVoiceRepository(LocalModelConfigRepository(ctx)) }
+            ),
+            ProviderIds.Hybrid.providerId to ComponentFactories(
+                providerFactory = { HybridProvider() },
+                createConfigRepo = { ctx -> HybridConfigRepository(ctx) },
+                createVoiceRepo = { ctx -> HybridVoiceRepository(ctx) }
             )
         ).also {
             TtsLogger.i("TtsProviderFactory: ${it.size} providers registered")

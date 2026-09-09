@@ -1,0 +1,302 @@
+package com.github.lonepheasantwarrior.talkify.service.provider.impl
+
+import com.github.lonepheasantwarrior.talkify.R
+import com.github.lonepheasantwarrior.talkify.book.config.BookTtsSettings
+import com.github.lonepheasantwarrior.talkify.book.model.Gender
+import com.github.lonepheasantwarrior.talkify.book.model.Utterance
+import com.github.lonepheasantwarrior.talkify.book.pipeline.DialogueAnalyzer
+import com.github.lonepheasantwarrior.talkify.book.router.RoleVoiceRouter
+import com.github.lonepheasantwarrior.talkify.book.store.CharacterBookStore
+import com.github.lonepheasantwarrior.talkify.domain.model.AzureConfig
+import com.github.lonepheasantwarrior.talkify.domain.model.BaseProviderConfig
+import com.github.lonepheasantwarrior.talkify.domain.model.ProviderIds
+import com.github.lonepheasantwarrior.talkify.domain.model.XiaomiConfig
+import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.XiaomiConfigRepository
+import com.github.lonepheasantwarrior.talkify.service.TtsErrorCode
+import com.github.lonepheasantwarrior.talkify.TalkifyAppHolder
+import com.github.lonepheasantwarrior.talkify.service.provider.AbstractTtsProvider
+import com.github.lonepheasantwarrior.talkify.service.provider.AudioConfig
+import com.github.lonepheasantwarrior.talkify.book.model.EmotionTag
+import com.github.lonepheasantwarrior.talkify.service.provider.SynthesisParams
+import com.github.lonepheasantwarrior.talkify.service.provider.TtsSynthesisListener
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+
+/**
+ * 混合引擎：MiMo 念旁白 + Edge 免费音色念角色
+ *
+ * 多角色听书开启时逐句编排：
+ * - 旁白 → 小米 MiMo（冰糖，稳定有质感的解说声；有 MiMo key 时启用）
+ * - 对白 → Edge 神经音色（免费、多个中文音色，按角色册绑定或性别槽位分配，
+ *          彻底解决双男/双女对手戏撞声线；晓双童声适合小孩角色）
+ * - 情感 → 旁白随 MiMo 风格指令；对白随语速微调（Edge express-as 在免费
+ *          端点不被保证，不作主要情感手段）
+ *
+ * 非听书文本（预览等）整段走 MiMo；无 MiMo key 时旁白回退 Edge 云野。
+ */
+class HybridProvider : AbstractTtsProvider() {
+
+    companion object {
+        /** 角色 → Edge 音色槽位默认（zh-CN 稳定可用集合） */
+        private val SLOT_VOICES = mapOf(
+            "male" to "zh-CN-YunxiNeural",
+            "male2" to "zh-CN-YunjianNeural",
+            "female" to "zh-CN-XiaoyiNeural",
+            "female2" to "zh-CN-XiaoxiaoNeural"
+        )
+
+        /** 无 MiMo key 时的旁白兜底音色 */
+        private const val NARRATOR_FALLBACK = "zh-CN-YunyangNeural"
+
+        /** MiMo 默认旁白音色 */
+        private const val MIMO_NARRATOR = "冰糖"
+
+        private const val UTTERANCE_TIMEOUT_SECONDS = 90L
+
+        private val EMOTION_STYLES = mapOf(
+            "JOY" to "用欢快喜悦、明亮的语气",
+            "ANGER" to "用愤怒严厉、压抑着怒火的语气",
+            "SADNESS" to "用悲伤低沉、带一点哽咽的语气",
+            "FEAR" to "用恐惧颤抖、气声很重的语气",
+            "SURPRISE" to "用惊讶上扬、难以置信的语气"
+        )
+    }
+
+    private val xiaomiProvider by lazy { XiaomiProvider() }
+    private val azureProvider by lazy { AzureProvider() }
+
+    private val xiaomiConfig: XiaomiConfig? by lazy {
+        runCatching {
+            val ctx = TalkifyAppHolder.getContext() ?: return@runCatching null
+            XiaomiConfigRepository(ctx).getConfig(ProviderIds.Xiaomi.providerId) as? XiaomiConfig
+        }.getOrNull()
+    }
+
+    private val hasMimoKey: Boolean
+        get() = !xiaomiConfig?.apiKey.isNullOrBlank()
+
+    private val providerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    @Volatile
+    private var isCancelled = false
+
+    override val tag: String = "HybridProvider"
+
+    override val voiceIds: List<String> by lazy {
+        loadVoiceIdsFromXml(R.xml.hybrid_voices)
+    }
+
+    override val fallbackVoiceId: String = "zh-CN-XiaoxiaoNeural"
+
+    override val supportedLanguages: Array<String> = arrayOf("zho", "eng")
+
+    override val configLabels: Map<String, Int> = mapOf(
+        "voice_id" to R.string.voice_select_label
+    )
+
+    override fun getProviderId(): String = ProviderIds.Hybrid.providerId
+
+    override fun getProviderName(): String = ProviderIds.Hybrid.provider
+
+    override fun getDefaultApiUrl(): String = ""
+
+    override fun getDefaultModelId(): String = ProviderIds.Hybrid.defaultModelId
+
+    override fun getAudioConfig(): AudioConfig = AudioConfig.createStandard(sampleRate = 24000)
+
+    override fun isConfigured(config: BaseProviderConfig?): Boolean = true
+
+    override fun createDefaultConfig(): BaseProviderConfig =
+        com.github.lonepheasantwarrior.talkify.domain.model.HybridConfig()
+
+    override fun stop() {
+        isCancelled = true
+        xiaomiProvider.stop()
+        azureProvider.stop()
+    }
+
+    override fun release() {
+        isCancelled = true
+        providerScope.cancel()
+        xiaomiProvider.release()
+        azureProvider.release()
+        super.release()
+    }
+
+    override fun synthesize(
+        text: String,
+        params: SynthesisParams,
+        config: BaseProviderConfig,
+        listener: TtsSynthesisListener
+    ) {
+        checkNotReleased()
+        if (text.isEmpty()) {
+            listener.onSynthesisCompleted()
+            return
+        }
+
+        val hybridConfig = config as? com.github.lonepheasantwarrior.talkify.domain.model.HybridConfig
+            ?: com.github.lonepheasantwarrior.talkify.domain.model.HybridConfig()
+
+        val bookMode = BookTtsSettings.isEnabled()
+        val utterances = if (bookMode) {
+            try {
+                DialogueAnalyzer.analyze(text)
+            } catch (e: Exception) {
+                logWarning("Dialogue analysis failed: ${e.message}")
+                emptyList()
+            }
+        } else emptyList()
+
+        isCancelled = false
+
+        if (utterances.isEmpty()) {
+            // 整段无对白：旁白引擎一条龙
+            providerScope.launch {
+                val ok = runBuffered(text, mimoConfig(hybridConfig, null, null), xiaomiProvider, listener, 1f)
+                if (ok && !isCancelled) {
+                    withContext(Dispatchers.Main) { listener.onSynthesisCompleted() }
+                }
+            }
+            return
+        }
+
+        logInfo("Hybrid book: ${utterances.size} utterances (旁白→MiMo, 角色→Edge)")
+        providerScope.launch {
+            try {
+                for ((index, u) in utterances.withIndex()) {
+                    if (isCancelled) return@launch
+                    val isNarration = !u.isQuote || u.speaker == Utterance.SPEAKER_NARRATOR
+                    val genderHint = if (u.gender == Gender.UNKNOWN) {
+                        CharacterBookStore.activeGenderFor(u.speaker)
+                    } else null
+                    val slot = RoleVoiceRouter.slotFor(u, genderHint)
+                    val plan = RoleVoiceRouter.resolve(u, null)
+
+                    val ok = if (isNarration) {
+                        val cfg = mimoConfig(hybridConfig, slotVoiceNarrator(), u.emotion)
+                        logDebug("#$index 旁白→MiMo text=${u.text.take(16)}")
+                        runBuffered(u.text, cfg, xiaomiProvider, listener, plan.speedMultiplier)
+                    } else {
+                        val edgeVoice = edgeVoiceFor(u.speaker) ?: SLOT_VOICES[slot] ?: fallbackVoiceId
+                        logDebug("#$index 角色→Edge speaker=${u.speaker} voice=$edgeVoice emotion=${u.emotion} text=${u.text.take(16)}")
+                        runBuffered(
+                            u.text,
+                            AzureConfig(voiceId = edgeVoice),
+                            azureProvider,
+                            listener,
+                            plan.speedMultiplier
+                        )
+                    }
+                    if (!ok || isCancelled) return@launch
+                }
+                if (!isCancelled) {
+                    withContext(Dispatchers.Main) { listener.onSynthesisCompleted() }
+                }
+            } catch (e: Exception) {
+                if (!isCancelled && e !is kotlinx.coroutines.CancellationException) {
+                    logError("Hybrid synthesis error", e)
+                    withContext(Dispatchers.Main) {
+                        listener.onError(TtsErrorCode.getErrorMessage(TtsErrorCode.ERROR_SYNTHESIS_FAILED))
+                    }
+                }
+            }
+        }
+    }
+
+    /** MiMo 旁白配置：角色册旁白绑定（非 Edge 前缀）优先，情感转风格指令 */
+    private fun mimoConfig(
+        hybrid: com.github.lonepheasantwarrior.talkify.domain.model.HybridConfig,
+        narratorBinding: String?,
+        emotion: EmotionTag?
+    ): XiaomiConfig {
+        val base = xiaomiConfig ?: XiaomiConfig()
+        val narrator = when {
+            !narratorBinding.isNullOrBlank() && !narratorBinding.startsWith("zh-CN-") -> narratorBinding
+            hybrid.voiceId.isNotBlank() -> hybrid.voiceId
+            else -> MIMO_NARRATOR
+        }
+        val style = emotion?.let { EMOTION_STYLES[it.name] }.orEmpty()
+        return base.copy(voiceId = narrator, styleInstruction = style)
+    }
+
+    private fun slotVoiceNarrator(): String? = CharacterBookStore.activeNarratorVoice()
+
+    /** 角色册若绑定了 Edge 音色（zh-CN- 前缀），优先精确使用 */
+    private fun edgeVoiceFor(speaker: String): String? =
+        CharacterBookStore.activeVoiceFor(speaker)?.takeIf { it.startsWith("zh-CN-") }
+
+    /** 阻塞驱动子引擎合成单句，收集音频后按序投递给混合监听器 */
+    private suspend fun runBuffered(
+        text: String,
+        config: BaseProviderConfig,
+        engine: AbstractTtsProvider,
+        listener: TtsSynthesisListener,
+        speedMultiplier: Float
+    ): Boolean = withContext(Dispatchers.IO) {
+        val buffer = ArrayDeque<ByteArray>()
+        var sampleRate = getAudioConfig().sampleRate
+        var failed: String? = null
+        val done = CountDownLatch(1)
+
+        val collector = object : TtsSynthesisListener {
+            override fun onSynthesisStarted() {}
+            override fun onAudioAvailable(
+                audioData: ByteArray,
+                sr: Int,
+                audioFormat: Int,
+                channelCount: Int
+            ) {
+                synchronized(buffer) { buffer.add(audioData) }
+                sampleRate = sr
+            }
+
+            override fun onSynthesisCompleted() {
+                done.countDown()
+            }
+
+            override fun onError(error: String) {
+                failed = error
+                done.countDown()
+            }
+        }
+
+        val synthParams = SynthesisParams(
+            pitch = 100f,
+            speechRate = speedMultiplier * 100f,
+            volume = 1f
+        )
+        engine.synthesize(text, synthParams, config, collector)
+
+        val finished = done.await(UTTERANCE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        when {
+            !finished -> {
+                engine.stop()
+                withContext(Dispatchers.Main) {
+                    listener.onError(TtsErrorCode.getErrorMessage(TtsErrorCode.ERROR_NETWORK_TIMEOUT))
+                }
+                false
+            }
+            failed != null -> {
+                withContext(Dispatchers.Main) { listener.onError(failed!!) }
+                false
+            }
+            else -> {
+                val chunks = synchronized(buffer) { buffer.toList() }
+                withContext(Dispatchers.Main) {
+                    listener.onSynthesisStarted()
+                    chunks.forEach { chunk ->
+                        listener.onAudioAvailable(chunk, sampleRate, android.media.AudioFormat.ENCODING_PCM_16BIT, 1)
+                    }
+                }
+                true
+            }
+        }
+    }
+}

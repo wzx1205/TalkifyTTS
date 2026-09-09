@@ -86,7 +86,7 @@ fun BookCharactersScreen(
     var expandedVoiceFor by remember { mutableStateOf<String?>(null) }
 
     val bundledVoices = remember {
-        // 本地 ZipVoice 内置音色 + MiMo 预置音色，供跨供应商绑定
+        // 本地 ZipVoice 内置音色 + MiMo 预置音色 + Edge 免费音色，供跨供应商绑定
         // （运行时按当前供应商的音色表校验，不属于该表的绑定自动回退槽位）
         val local = LocalVoiceCatalog.getVoices().map {
             it.voiceId to "本地·${it.displayName}"
@@ -96,7 +96,16 @@ fun BookCharactersScreen(
                 context, com.github.lonepheasantwarrior.talkify.R.xml.xiaomi_mimo_voices_v2p5
             ).map { it.id to "MiMo·${it.displayName}" }
         }.getOrDefault(emptyList())
-        local + mimo
+        val edge = listOf(
+            "zh-CN-YunxiNeural" to "Edge·云希(青年男)",
+            "zh-CN-YunjianNeural" to "Edge·云健(浑厚男)",
+            "zh-CN-YunyangNeural" to "Edge·云野(播音男)",
+            "zh-CN-YunxiaNeural" to "Edge·云夏(少年)",
+            "zh-CN-XiaoxiaoNeural" to "Edge·晓晓(女)",
+            "zh-CN-XiaoyiNeural" to "Edge·晓伊(温柔女)",
+            "zh-CN-XiaoshuangNeural" to "Edge·晓双(童声)"
+        )
+        local + mimo + edge
     }
 
     val importLauncher = rememberLauncherForActivityResult(

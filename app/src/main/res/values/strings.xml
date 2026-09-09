@@ -172,7 +172,7 @@
 
     <!-- 多角色听书（本地模型） -->
     <string name="book_mode_title">多角色听书</string>
-    <string name="book_mode_hint">自动识别对白/旁白与性别，按角色切换声线（本地模型 / 小米 MiMo）</string>
+    <string name="book_mode_hint">自动识别对白/旁白与性别，按角色切换声线（本地模型 / 小米 MiMo / 混合）</string>
     <string name="book_characters_manage">管理角色 ›</string>
 
     <!-- 听书角色册 -->

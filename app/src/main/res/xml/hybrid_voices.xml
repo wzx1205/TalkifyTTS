@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    混合引擎音色目录
+    - 冰糖：MiMo 旁白默认声线（走小米 API）
+    - zh-CN-*：Edge 免费神经音色（走微软 WSS），分配给对白角色
+    角色册绑定时以此列表为准：MiMo 名字走小米，zh-CN-* 走 Edge
+-->
+<voices>
+    <voice id="冰糖" displayName="旁白·冰糖(MiMo)" description="MiMo 旁白解说声" />
+    <voice id="zh-CN-YunxiNeural" displayName="Edge·云希" description="青年男声" />
+    <voice id="zh-CN-YunjianNeural" displayName="Edge·云健" description="浑厚男声" />
+    <voice id="zh-CN-YunyangNeural" displayName="Edge·云野" description="新闻播音男声" />
+    <voice id="zh-CN-YunxiaNeural" displayName="Edge·云夏" description="少年男声" />
+    <voice id="zh-CN-XiaoxiaoNeural" displayName="Edge·晓晓" description="青年女声" />
+    <voice id="zh-CN-XiaoyiNeural" displayName="Edge·晓伊" description="温柔女声" />
+    <voice id="zh-CN-XiaoshuangNeural" displayName="Edge·晓双" description="童声，适合小孩角色" />
+</voices>
