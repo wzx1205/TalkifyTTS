@@ -32,7 +32,7 @@ object CharacterScanner {
     /** 代词/群体不是可绑定音色的角色 */
     private val NON_CHARACTERS = setOf("她", "他", "它", "众人", "两人", "大家", "自己")
 
-    fun scan(chapterTexts: List<String>): List<CharacterProfile> {
+    fun scan(chapterTexts: List<String>, minDialogueCount: Int = 3): List<CharacterProfile> {
         data class Acc(
             var count: Int = 0,
             var femaleVotes: Int = 0,
@@ -61,7 +61,7 @@ object CharacterScanner {
         }
 
         val profiles = acc.mapNotNull { (name, a) ->
-            if (a.count < 2) return@mapNotNull null  // 单次出场多为误判
+            if (a.count < minDialogueCount) return@mapNotNull null  // 资格线：对白太少的当路人
             val gender = when {
                 a.femaleVotes > a.maleVotes -> Gender.FEMALE
                 a.maleVotes > a.femaleVotes -> Gender.MALE
@@ -79,8 +79,9 @@ object CharacterScanner {
     }
 
     /**
-     * 截断名合并：抽取残留的「陈平」「老秀」并入「陈平安」「老秀才」
-     * （短名是对白量的少数倍数时判定为截断，而非同名角色）
+     * 截断名合并：抽取残留的「陈平」「崔东」并入「陈平安」「崔东山」。
+     * 长名对白量须明显占优（≥1.5 倍）才判定短名为截断，
+     * 避免误合同名不同角色。
      */
     private fun mergePrefixTruncations(profiles: List<CharacterProfile>): List<CharacterProfile> {
         val counts = HashMap<String, Int>()
@@ -89,11 +90,10 @@ object CharacterScanner {
 
         for (short in profiles) {
             if (short.name in absorbed) continue
-            // 找以短名为前缀的更长候选，且长名对白量远大于短名（截断特征）
             val full = profiles.firstOrNull {
                 it.name.length > short.name.length &&
                     it.name.startsWith(short.name) &&
-                    it.dialogueCount >= short.dialogueCount * 3
+                    it.dialogueCount >= short.dialogueCount * 1.5f
             } ?: continue
             counts[full.name] = (counts[full.name] ?: full.dialogueCount) + short.dialogueCount
             absorbed.add(short.name)

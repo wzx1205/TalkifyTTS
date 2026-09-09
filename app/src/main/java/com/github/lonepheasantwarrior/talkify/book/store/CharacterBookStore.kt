@@ -32,10 +32,10 @@ object CharacterBookStore {
 
     // ---- 查询（合成热路径） ----
 
-    /** 当前生效书里某角色的音色绑定；无生效书/无绑定返回 null */
+    /** 当前生效书里某角色的音色绑定（含前缀互配）；无生效书/无绑定返回 null */
     fun activeVoiceFor(name: String): String? {
         val id = activeBookId() ?: return null
-        return load(id)?.voiceFor(name)
+        return load(id)?.matchSpeaker(name)?.voiceId
     }
 
     /** 当前生效书的旁白声线；无生效书/未设置返回 null */
@@ -44,10 +44,10 @@ object CharacterBookStore {
         return load(id)?.narratorVoiceId?.takeIf { it.isNotBlank() }
     }
 
-    /** 当前生效书里某角色的全书扫描性别；无生效书/无绑定返回 null */
+    /** 当前生效书里某角色的全书扫描性别（含前缀互配）；无生效书/无绑定返回 null */
     fun activeGenderFor(name: String): Gender? {
         val id = activeBookId() ?: return null
-        return load(id)?.characters?.firstOrNull { it.name == name }?.gender
+        return load(id)?.matchSpeaker(name)?.gender
     }
 
     fun activeBookId(): String? {

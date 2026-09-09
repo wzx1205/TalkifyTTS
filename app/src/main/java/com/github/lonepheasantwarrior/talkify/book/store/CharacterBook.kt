@@ -17,7 +17,22 @@ data class CharacterBook(
     val narratorVoiceId: String = ""
 ) {
     fun voiceFor(name: String): String? =
-        characters.firstOrNull { it.name == name }?.voiceId
+        matchSpeaker(name)?.voiceId
+
+    /**
+     * 说话人 → 角色匹配：先精确，再前缀互配。
+     *
+     * 运行时抽取的说话人可能是人名截断（「陈平」）或带动作尾巴
+     * （「顾璨放」←顾璨放下筷子），前缀互配到对白量最多的候选，
+     * 保证同一角色全书记忆同一条声线与性别。
+     */
+    fun matchSpeaker(name: String): BookCharacterBinding? {
+        characters.firstOrNull { it.name == name }?.let { return it }
+        return characters.filter { candidate ->
+            candidate.name != name &&
+                (candidate.name.startsWith(name) || name.startsWith(candidate.name))
+        }.maxByOrNull { it.dialogueCount }
+    }
 }
 
 /**
