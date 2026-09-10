@@ -7,6 +7,7 @@ plugins {
 
 android {
     namespace = "com.github.lonepheasantwarrior.talkify"
+    ndkVersion = "28.2.13676358"
     compileSdk {
         version = release(37)
     }
@@ -18,12 +19,34 @@ android {
         versionCode = 33
         versionName = "1.0.31-multirole"
 
+        // 真机验证用：-PspikeSuffix 装成独立包名（xxx.spike），
+        // 避免 debug 包覆盖用户日常使用的正式版、破坏其数据
+        if (project.hasProperty("spikeSuffix")) {
+            applicationIdSuffix = ".spike"
+            versionNameSuffix = "-spike"
+        }
+
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // 与 splits.abi.include 保持一致：universal 包收录的是通过 abiFilters 的全部 ABI
         // （splits.include 只约束独立 APK），x86 需在此排除——其引擎库仍含全量 onnxruntime
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
+
+        // 手写 llama.cpp JNI（app/src/main/cpp）；产物 libtalkify_llm.so 供 LlamaBridge 加载
+        externalNativeBuild {
+            cmake {
+                arguments += listOf("-DANDROID_STL=c++_static", "-DCMAKE_BUILD_TYPE=Release")
+                cppFlags += listOf("-O3", "-fexceptions", "-frtti")
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
         }
     }
 
@@ -54,6 +77,30 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+
+    // 纯 JVM 单测里 android.util.Log 是抛异常的桩，会把只做日志的代码路径也弄挂。
+    // 关掉"方法未实现即抛"后返回默认值，日志在单测中静默丢弃。
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
+    // GenieX SDK 通过 applicationInfo.nativeLibraryDir 按路径 dlopen 插件，
+    // 默认 extractNativeLibs=false（库只在 APK 内、不落地）会让它找不到。
+    // 仅 spike 构建打开，正式包不受影响。
+    if (project.hasProperty("spikeGenieX")) {
+        packaging {
+            jniLibs {
+                useLegacyPackaging = true
+            }
+        }
+        // GenieX 专用的测试源目录：只有带 -PspikeGenieX 时才纳入编译，
+        // 否则 androidTest 会因缺少 com.geniex.* 依赖而编译失败
+        sourceSets {
+            getByName("androidTest") {
+                java.srcDir("src/androidTestGenieX/java")
+            }
+        }
     }
 }
 
@@ -119,4 +166,10 @@ dependencies {
 
     // 压缩包解压（tar.bz2），用于解压 espeak-ng-data 等模型资源
     implementation(libs.commons.compress)
+
+    // 仅本地 spike 验证用：-PspikeGenieX 打开，用真机 NPU 跑 LLM 做对比实验。
+    // 正式包默认不引入（AAR 含 ~204MB 原生库，且仅支持 Snapdragon 8 Elite 系列）。
+    if (project.hasProperty("spikeGenieX")) {
+        implementation(libs.geniex.android)
+    }
 }

@@ -16,6 +16,7 @@ navigationCompose = "2.10.0"
 okhttp = "4.12.0"
 commons-compress = "1.28.0"
 org-json = "20260814"
+geniex = "0.3.12"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -42,6 +43,8 @@ jlayer = { group = "javazoom", name = "jlayer", version.ref = "jlayer" }
 commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commons-compress" }
 # 本地 JVM 单测用：覆盖 android.jar 中抛 Stub 异常的 org.json
 org-json = { group = "org.json", name = "json", version.ref = "org-json" }
+# 高通 GenieX Android SDK（Apache-2.0，Maven Central，自带 Hexagon NPU kernel + QNN 运行时）
+geniex-android = { group = "com.qualcomm.qti", name = "geniex-android", version.ref = "geniex" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

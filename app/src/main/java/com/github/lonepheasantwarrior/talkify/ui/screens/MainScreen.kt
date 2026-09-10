@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.SettingsSuggest
 import androidx.compose.material.icons.rounded.Settings
@@ -41,6 +42,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Button
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -84,6 +87,9 @@ import com.github.lonepheasantwarrior.talkify.domain.repository.VoiceInfo
 import com.github.lonepheasantwarrior.talkify.domain.repository.VoiceRepository
 import com.github.lonepheasantwarrior.talkify.infrastructure.app.power.PowerOptimizationHelper
 import com.github.lonepheasantwarrior.talkify.infrastructure.app.repo.SharedPreferencesAppConfigRepository
+import com.github.lonepheasantwarrior.talkify.llm.LlmBookConfig
+import com.github.lonepheasantwarrior.talkify.llm.LlmEngine
+import com.github.lonepheasantwarrior.talkify.llm.LlmModelDownloader
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.local.LocalModelManager
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.AliyunBailianConfigRepository
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.AliyunBailianVoiceRepository
@@ -100,7 +106,9 @@ import com.github.lonepheasantwarrior.talkify.ui.components.VoicePreview
 import com.github.lonepheasantwarrior.talkify.ui.components.rememberTelemetryScrollObserver
 import com.github.lonepheasantwarrior.talkify.ui.viewmodel.MainViewModel
 import com.github.lonepheasantwarrior.talkify.ui.viewmodel.startup.StartupState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
 @OptIn(ExperimentalMaterial3Api::class)
@@ -235,8 +243,8 @@ fun MainScreen(
     // 本地模型下载确认对话框状态
     var pendingLocalModelConfig by remember { mutableStateOf<LocalModelConfig?>(null) }
 
-    LaunchedEffect(currentProvider) {
-        savedConfig = getConfigRepository(currentProvider.id).getConfig(currentProvider.id)
+    // savedConfig 也作为 key：设置弹窗保存后（含切换本地模型）主屏音色列表随之刷新
+    LaunchedEffect(currentProvider, savedConfig) {
         val voices = getVoiceRepository(currentProvider.id).getVoicesForProvider(currentProvider)
         availableVoices = voices
         selectedVoice = availableVoices.find { it.voiceId == savedConfig.voiceId } ?: voices.firstOrNull()
@@ -249,7 +257,7 @@ fun MainScreen(
             val provider = TtsProviderFactory.createProvider(currentProvider.id)
             provider?.getDefaultModelId()?.ifBlank { currentProvider.defaultModelId } ?: currentProvider.defaultModelId
         }
-        currentProvider.copy(defaultModelId = effectiveModelId)
+        currentProvider.copy(defaultModelId = displayModelName(currentProvider.id, effectiveModelId))
     }
 
     // 供应商列表展示也自适应各供应商的自定义模型 ID
@@ -260,7 +268,7 @@ fun MainScreen(
                 val p = TtsProviderFactory.createProvider(provider.id)
                 p?.getDefaultModelId()?.ifBlank { provider.defaultModelId } ?: provider.defaultModelId
             }
-            provider.copy(defaultModelId = effectiveModelId)
+            provider.copy(defaultModelId = displayModelName(provider.id, effectiveModelId))
         }
     }
 
@@ -455,6 +463,9 @@ fun MainScreen(
                                     )
                                 }
                             }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                            LlmAnalysisCard()
                         }
 
                         VoicePreview(
@@ -677,6 +688,18 @@ fun MainScreen(
     }
 }
 
+/**
+ * 供应商副标题展示的模型名
+ *
+ * 本地模型的 modelId 是内部标识（如 zipvoice_distill / melotts_zh_en），
+ * 直接展示对用户无意义；有注册表条目时换成展示名（如 "MeloTTS 中英混合"），
+ * 其余供应商保持原样（它们的 modelId 本身就是面向展示的，如 seed-tts-2.0）。
+ */
+private fun displayModelName(providerId: String, modelId: String): String {
+    if (providerId != ProviderIds.LocalModel.providerId) return modelId
+    return LocalModelRegistry.getModel(modelId)?.displayName ?: modelId
+}
+
 @Composable
 fun DefaultProviderBanner(
     onClick: () -> Unit,
@@ -765,6 +788,105 @@ fun AboutPageHintBanner(
                     text = stringResource(R.string.about_page_hint_banner_content),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 端上 LLM（Qwen3-0.6B）角色分析卡片
+ *
+ * 开启后，规则引擎先切好句，本地小模型再逐句校正说话人/性别/语气（不参与切句，
+ * 失败自动回退规则结果，不影响朗读）。模型按需下载，约 460MB，下载一次后常驻可用。
+ */
+@Composable
+private fun LlmAnalysisCard() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var enabled by remember { mutableStateOf(LlmBookConfig.isEnabled()) }
+    var modelReady by remember { mutableStateOf(LlmEngine.isModelReady(context)) }
+    var downloading by remember { mutableStateOf(false) }
+    var progress by remember { mutableStateOf(0f) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+        ),
+        shape = MaterialTheme.shapes.large
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Filled.AutoFixHigh,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = stringResource(R.string.llm_analysis_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f)
+                )
+                Switch(
+                    checked = enabled,
+                    onCheckedChange = { on ->
+                        enabled = on
+                        LlmBookConfig.setEnabled(on)
+                        if (!on) LlmEngine.release()
+                    }
+                )
+            }
+            Text(
+                text = stringResource(R.string.llm_analysis_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (enabled && !modelReady) {
+                Spacer(Modifier.height(10.dp))
+                if (downloading) {
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "${(progress * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                } else {
+                    Button(
+                        onClick = {
+                            downloading = true
+                            scope.launch {
+                                val ok = withContext(Dispatchers.IO) {
+                                    LlmModelDownloader.download(
+                                        context = context,
+                                        onProgress = { done, total ->
+                                            progress = if (total > 0) done.toFloat() / total else 0f
+                                        }
+                                    )
+                                }
+                                downloading = false
+                                modelReady = ok && LlmEngine.isModelReady(context)
+                            }
+                        }
+                    ) {
+                        Text(stringResource(R.string.llm_analysis_download))
+                    }
+                }
+            }
+
+            if (enabled && modelReady) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = stringResource(R.string.llm_analysis_ready),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
         }
