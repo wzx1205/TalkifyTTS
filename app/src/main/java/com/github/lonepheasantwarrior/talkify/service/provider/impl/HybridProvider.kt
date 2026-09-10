@@ -57,6 +57,15 @@ class HybridProvider : AbstractTtsProvider() {
         /** MiMo 默认旁白音色 */
         private const val MIMO_NARRATOR = "冰糖"
 
+        /** Edge 失败时 MiMo 兜底声线（按槽位） */
+        private val MIMO_SLOT_FALLBACK = mapOf(
+            "male" to "苏打",
+            "male2" to "白桦",
+            "female" to "茉莉",
+            "female2" to "冰糖",
+            "narrator" to "冰糖"
+        )
+
         private const val UTTERANCE_TIMEOUT_SECONDS = 90L
 
         private val EMOTION_STYLES = mapOf(
@@ -182,7 +191,18 @@ class HybridProvider : AbstractTtsProvider() {
                     val ok = if (isNarration) {
                         val cfg = mimoConfig(hybridConfig, slotVoiceNarrator(), u.emotion)
                         logDebug("#$index 旁白→MiMo text=${u.text.take(16)}")
-                        runBuffered(u.text, cfg, xiaomiProvider, listener, plan.speedMultiplier)
+                        // 双引擎互为备胎：主引擎失败重试一次，仍失败切另一引擎，永不断流
+                        val primaryError = runWithRetry(u.text, cfg, xiaomiProvider, listener, plan.speedMultiplier)
+                        if (primaryError == null) true else {
+                            logWarning("MiMo narration failed, fallback Edge narrator")
+                            runBuffered(
+                                u.text,
+                                AzureConfig(voiceId = NARRATOR_FALLBACK),
+                                azureProvider,
+                                listener,
+                                plan.speedMultiplier
+                            )
+                        }
                     } else {
                         var edgeVoice = edgeVoiceFor(u.speaker) ?: SLOT_VOICES[slot] ?: fallbackVoiceId
                         // 相邻对白防撞：不同角色连续对话时在 Edge 同性别池内轮转
@@ -196,13 +216,25 @@ class HybridProvider : AbstractTtsProvider() {
                         }
                         RoleVoiceRouter.registerSpoken(u.speaker, edgeVoice)
                         logDebug("#$index 角色→Edge speaker=${u.speaker} voice=$edgeVoice emotion=${u.emotion} text=${u.text.take(16)}")
-                        runBuffered(
+                        val primaryError = runWithRetry(
                             u.text,
                             AzureConfig(voiceId = edgeVoice),
                             azureProvider,
                             listener,
                             plan.speedMultiplier
                         )
+                        if (primaryError == null) true else {
+                            // Edge 失败：切 MiMo 用性别槽位声线念这句，听感不断
+                            val mimoVoice = MIMO_SLOT_FALLBACK[slot] ?: "苏打"
+                            logWarning("Edge failed for ${u.speaker}, fallback MiMo voice=$mimoVoice")
+                            runBuffered(
+                                u.text,
+                                mimoConfig(hybridConfig, null, u.emotion).copy(voiceId = mimoVoice),
+                                xiaomiProvider,
+                                listener,
+                                plan.speedMultiplier
+                            )
+                        }
                     }
                     if (!ok || isCancelled) return@launch
                 }
@@ -242,13 +274,30 @@ class HybridProvider : AbstractTtsProvider() {
     private fun edgeVoiceFor(speaker: String): String? =
         CharacterBookStore.activeVoiceFor(speaker)?.takeIf { it.startsWith("zh-CN-") }
 
+    /** 失败重试一次的合成（Edge/WSS 间歇性拒绝的兜底） */
+    private suspend fun runWithRetry(
+        text: String,
+        config: BaseProviderConfig,
+        engine: AbstractTtsProvider,
+        listener: TtsSynthesisListener,
+        speedMultiplier: Float
+    ): String? {
+        val first = runBuffered(text, config, engine, listener, speedMultiplier, reportErrors = false)
+        if (first || isCancelled) return null
+        logWarning("Retry once after failure: ${config.voiceId}")
+        val second = runBuffered(text, config, engine, listener, speedMultiplier, reportErrors = false)
+        if (second || isCancelled) return null
+        return TtsErrorCode.getErrorMessage(TtsErrorCode.ERROR_SYNTHESIS_FAILED)
+    }
+
     /** 阻塞驱动子引擎合成单句，收集音频后按序投递给混合监听器 */
     private suspend fun runBuffered(
         text: String,
         config: BaseProviderConfig,
         engine: AbstractTtsProvider,
         listener: TtsSynthesisListener,
-        speedMultiplier: Float
+        speedMultiplier: Float,
+        reportErrors: Boolean = true
     ): Boolean = withContext(Dispatchers.IO) {
         val buffer = ArrayDeque<ByteArray>()
         var sampleRate = getAudioConfig().sampleRate
@@ -288,13 +337,17 @@ class HybridProvider : AbstractTtsProvider() {
         when {
             !finished -> {
                 engine.stop()
-                withContext(Dispatchers.Main) {
-                    listener.onError(TtsErrorCode.getErrorMessage(TtsErrorCode.ERROR_NETWORK_TIMEOUT))
+                if (reportErrors) {
+                    withContext(Dispatchers.Main) {
+                        listener.onError(TtsErrorCode.getErrorMessage(TtsErrorCode.ERROR_NETWORK_TIMEOUT))
+                    }
                 }
                 false
             }
             failed != null -> {
-                withContext(Dispatchers.Main) { listener.onError(failed!!) }
+                if (reportErrors) {
+                    withContext(Dispatchers.Main) { listener.onError(failed!!) }
+                }
                 false
             }
             else -> {
