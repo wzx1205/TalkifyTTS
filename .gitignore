@@ -25,3 +25,6 @@ local.properties
 # local build artifacts
 hs_err_pid*.log
 book-smoke-test/
+
+# 手写 JNI 依赖的 llama.cpp 源码（~87MB），不入库；用 scripts/fetch-llama-cpp.sh 还原
+/app/src/main/cpp/llama.cpp/

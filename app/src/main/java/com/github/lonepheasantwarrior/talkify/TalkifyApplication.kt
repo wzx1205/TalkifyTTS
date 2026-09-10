@@ -12,6 +12,7 @@ import com.github.lonepheasantwarrior.talkify.infrastructure.app.notification.Ta
 import com.github.lonepheasantwarrior.talkify.infrastructure.app.telemetry.DeviceInfoCollector
 import com.github.lonepheasantwarrior.talkify.infrastructure.app.telemetry.TalkifyTelemetry
 import com.github.lonepheasantwarrior.talkify.infrastructure.app.telemetry.recorder.UmamiRecorder
+import com.github.lonepheasantwarrior.talkify.llm.LlmBookConfig
 import com.github.lonepheasantwarrior.talkify.service.TtsLogger
 
 class TalkifyApplication : Application() {
@@ -25,6 +26,7 @@ class TalkifyApplication : Application() {
         TtsLogger.i(TAG) { "TalkifyApplication onCreate" }
         TalkifyAppHolder.setContext(this)
         BookTtsSettings.init(this)
+        LlmBookConfig.init(this)
         TalkifyExceptionHandler.initialize()
         createNotificationChannels()
         deleteLegacyTelemetryPrefs()

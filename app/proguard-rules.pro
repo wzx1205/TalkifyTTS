@@ -101,3 +101,10 @@
 #      方法被重命名会触发 NoSuchMethodError
 -keep class com.k2fsa.sherpa.onnx.** { *; }
 -keep class com.github.lonepheasantwarrior.talkify.infrastructure.provider.local.SherpaCallbackBridge { *; }
+
+# ==================== 手写 llama.cpp JNI 桥 ProGuard 规则 ====================
+# libtalkify_llm.so 里的符号是 Java_com_..._LlamaBridge_nativeInit 这种"按名字查找"的，
+# 类名/方法名一旦被 R8 混淆，JNI 就会 NoSuchMethodError / UnsatisfiedLinkError。
+# 回调接口 TokenCallback.onToken 也由 native 侧 GetMethodID 查找，必须一并保留。
+-keep class com.github.lonepheasantwarrior.talkify.llm.LlamaBridge { *; }
+-keep interface com.github.lonepheasantwarrior.talkify.llm.LlamaBridge$TokenCallback { *; }
