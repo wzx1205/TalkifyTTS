@@ -11,6 +11,7 @@ import com.github.lonepheasantwarrior.talkify.book.model.Utterance
 import com.github.lonepheasantwarrior.talkify.book.router.RoleVoiceRouter
 import com.github.lonepheasantwarrior.talkify.book.store.CharacterBookStore
 import com.github.lonepheasantwarrior.talkify.domain.model.BaseProviderConfig
+import com.github.lonepheasantwarrior.talkify.domain.model.LocalModelArchitecture
 import com.github.lonepheasantwarrior.talkify.domain.model.LocalModelConfig
 import com.github.lonepheasantwarrior.talkify.domain.model.LocalModelInfo
 import com.github.lonepheasantwarrior.talkify.domain.model.LocalModelRegistry
@@ -62,6 +63,9 @@ class LocalModelProvider : AbstractTtsProvider() {
 
         /** 引擎空闲释放超时：ZipVoice 模型约 200MB native 内存，空闲期间应归还系统 */
         private const val ENGINE_IDLE_TIMEOUT_MS = 5 * 60 * 1000L
+
+        /** VITS 路径（MeloTTS）不需要参考音频，用这个空样本占位 */
+        private val EMPTY_REFERENCE = WavSampleReader.WavSamples(FloatArray(0), 0)
 
         // ---- 进程级共享引擎状态 ----
         // Provider 实例随使用方各自创建（TTS 服务 / 设置页音色预览），但 ZipVoice
@@ -270,14 +274,15 @@ class LocalModelProvider : AbstractTtsProvider() {
                         )
                     } else {
                         val voice = resolveVoice(lc.voiceId, modelInfo)
-                        val reference = loadReference(modelInfo, modelDir, voice)
+                        val reference = referenceFor(modelInfo, modelDir, voice)
                         logInfo("Using voice=${voice.voiceId}, reference=${voice.referenceFileName}")
                         currentEngine.synthesizeStream(
                             text = text,
                             referenceAudio = reference.samples,
                             referenceSampleRate = reference.sampleRate,
                             referenceText = voice.referenceText,
-                            speed = baseSpeed
+                            speed = baseSpeed,
+                            speakerId = voice.speakerId
                         ) { pcmData, sampleRate ->
                             if (!isCancelled) {
                                 listener.onAudioAvailable(
@@ -310,8 +315,11 @@ class LocalModelProvider : AbstractTtsProvider() {
 
     /**
      * 角色册预热：预解码生效书全部绑定音色的参考音频进缓存
+     *
+     * VITS/MeloTTS 无参考音频，预热无意义，直接跳过。
      */
     private suspend fun preloadBookVoices(modelInfo: LocalModelInfo, modelDir: File) {
+        if (isVits(modelInfo)) return
         try {
             val bookId = CharacterBookStore.activeBookId() ?: return
             val voiceIds = CharacterBookStore.load(bookId)
@@ -359,13 +367,14 @@ class LocalModelProvider : AbstractTtsProvider() {
 
         if (utterances.isEmpty()) {
             val voice = resolveVoice(fallbackVoiceId, modelInfo)
-            val reference = loadReference(modelInfo, modelDir, voice)
+            val reference = referenceFor(modelInfo, modelDir, voice)
             engine.synthesizeStream(
                 text = text,
                 referenceAudio = reference.samples,
                 referenceSampleRate = reference.sampleRate,
                 referenceText = voice.referenceText,
-                speed = baseSpeed
+                speed = baseSpeed,
+                speakerId = voice.speakerId
             ) { pcm, sr ->
                 if (!isCancelled) {
                     listener.onAudioAvailable(pcm, sr, AudioFormat.ENCODING_PCM_16BIT, 1)
@@ -376,7 +385,7 @@ class LocalModelProvider : AbstractTtsProvider() {
         }
 
         logInfo("Book multi-role: ${utterances.size} utterances")
-        val localVoiceIds = LocalVoiceCatalog.getVoices().map { it.voiceId }.toSet()
+        val localVoiceIds = voicesFor(modelInfo).map { it.voiceId }.toSet()
         for (u in utterances) {
             if (isCancelled) return
             val plan = RoleVoiceRouter.resolve(u, fallbackVoiceId)
@@ -391,20 +400,18 @@ class LocalModelProvider : AbstractTtsProvider() {
                     ?.takeIf { it in localVoiceIds } ?: (plan.voiceId ?: fallbackVoiceId)
                 else -> plan.voiceId ?: fallbackVoiceId
             }
-            // 相邻对白防撞：不同角色连续对话时在同性别音色池内轮转
+            // 相邻对白防撞：不同角色连续对话时在同性别音色池内轮转（池随当前模型变化）
             var utteranceVoice = requestedVoice
             if (RoleVoiceRouter.collidesWithPrevious(u.speaker, utteranceVoice)) {
-                val pool = if (utteranceVoice.startsWith("zh_female")) {
-                    com.github.lonepheasantwarrior.talkify.book.store.VoiceAutoAssign.FEMALE_POOL
-                } else {
-                    com.github.lonepheasantwarrior.talkify.book.store.VoiceAutoAssign.MALE_POOL
-                }
+                val (femalePool, malePool) =
+                    com.github.lonepheasantwarrior.talkify.book.store.VoiceAutoAssign.poolsForLocalModel(modelInfo)
+                val pool = if (utteranceVoice in femalePool) femalePool else malePool
                 val idx = pool.indexOf(utteranceVoice)
                 if (idx >= 0) utteranceVoice = pool[(idx + 1) % pool.size]
             }
             RoleVoiceRouter.registerSpoken(u.speaker, utteranceVoice)
             val voice = resolveVoice(utteranceVoice, modelInfo)
-            val reference = loadReference(modelInfo, modelDir, voice)
+            val reference = referenceFor(modelInfo, modelDir, voice)
             val speed = (baseSpeed * plan.speedMultiplier).coerceIn(0.5f, 2.0f)
             logInfo(
                 "Utterance speaker=${u.speaker} quote=${u.isQuote} emotion=${u.emotion} " +
@@ -415,7 +422,8 @@ class LocalModelProvider : AbstractTtsProvider() {
                 referenceAudio = reference.samples,
                 referenceSampleRate = reference.sampleRate,
                 referenceText = voice.referenceText,
-                speed = speed
+                speed = speed,
+                speakerId = voice.speakerId
             ) { pcm, sr ->
                 if (!isCancelled) {
                     listener.onAudioAvailable(pcm, sr, AudioFormat.ENCODING_PCM_16BIT, 1)
@@ -428,20 +436,54 @@ class LocalModelProvider : AbstractTtsProvider() {
 
     /**
      * 解析音色：请求 ID 优先，不可用时回落目录默认音色
+     *
+     * 音色来源按架构区分：VITS/MeloTTS 用模型自带 speaker 表；
+     * ZipVoice 优先用随 APK 内置的参考音频音色目录。
      */
     private fun resolveVoice(requestedVoiceId: String?, modelInfo: LocalModelInfo): LocalModelVoice {
         val requested = extractRealVoiceName(requestedVoiceId) ?: requestedVoiceId.orEmpty()
-        val bundledVoices = LocalVoiceCatalog.getVoices()
-        val voice = bundledVoices.firstOrNull { it.voiceId == requested }
-            ?: bundledVoices.firstOrNull()
-            ?: modelInfo.voiceList.firstOrNull { it.voiceId == requested }
-            ?: modelInfo.voiceList.firstOrNull()
+        val candidates = voicesFor(modelInfo)
+        val voice = candidates.firstOrNull { it.voiceId == requested }
+            ?: candidates.firstOrNull()
             ?: throw IllegalStateException("模型 ${modelInfo.id} 未配置音色")
         if (requested.isNotBlank() && requested != voice.voiceId) {
             logWarning("Voice '$requested' unavailable, falling back to '${voice.voiceId}'")
         }
         return voice
     }
+
+    /**
+     * 该模型的可用音色列表
+     *
+     * VITS/MeloTTS 是自带 speaker 表的多说话人模型，与 ZipVoice 的
+     * "参考音频即音色"目录无关，不能混用（否则会拿到不存在的参考音频路径）。
+     */
+    private fun voicesFor(modelInfo: LocalModelInfo): List<LocalModelVoice> =
+        if (modelInfo.architecture == LocalModelArchitecture.MELO_VITS) {
+            modelInfo.voiceList
+        } else {
+            LocalVoiceCatalog.getVoices().ifEmpty { modelInfo.voiceList }
+        }
+
+    private fun isVits(modelInfo: LocalModelInfo): Boolean =
+        modelInfo.architecture == LocalModelArchitecture.MELO_VITS
+
+    /**
+     * 取该音色合成所需的参考音频
+     *
+     * VITS/MeloTTS 由 speaker id 决定音色，不需要参考音频，
+     * 直接返回空样本，避免去读一个并不存在的 wav 文件。
+     */
+    private fun referenceFor(
+        modelInfo: LocalModelInfo,
+        modelDir: File,
+        voice: LocalModelVoice
+    ): WavSampleReader.WavSamples =
+        if (isVits(modelInfo)) {
+            EMPTY_REFERENCE
+        } else {
+            loadReference(modelInfo, modelDir, voice)
+        }
 
     private fun loadReference(
         modelInfo: LocalModelInfo,
@@ -563,13 +605,13 @@ class LocalModelProvider : AbstractTtsProvider() {
     }
 
     /**
-     * 展示/可选音色：内置音色目录优先（就绪后不再展示注册表兜底音色）；
-     * 目录异常为空时回退注册表音色兜底
+     * 展示/可选音色
+     *
+     * 按当前模型架构取音色表：VITS/MeloTTS 用模型自带 speaker 表；
+     * ZipVoice 优先用内置参考音频目录，目录为空时回退注册表音色兜底。
      */
-    private fun getDisplayVoices(): List<LocalModelVoice> {
-        val bundled = LocalVoiceCatalog.getVoices()
-        return if (bundled.isNotEmpty()) bundled else resolveModelInfo(currentModelId).voiceList
-    }
+    private fun getDisplayVoices(): List<LocalModelVoice> =
+        voicesFor(resolveModelInfo(currentModelId))
 
     override fun getConfigLabel(configKey: String, context: Context): String? {
         return when (configKey) {

@@ -15,6 +15,19 @@ enum class ModelDownloadStatus {
 }
 
 /**
+ * 本地 TTS 模型架构
+ *
+ * 决定 sherpa-onnx 走哪条推理路径，以及"音色"如何定义：
+ * - [ZIPVOICE]：零样本流匹配，音色由参考音频 + 逐字稿定义（referenceAudio 必填）
+ * - [MELO_VITS]：MeloTTS 的 VITS 变体，多说话人由 speaker id 选择（无需参考音频），
+ *   中文分词/注音由模型包内的 lexicon + dict 提供
+ */
+enum class LocalModelArchitecture {
+    ZIPVOICE,
+    MELO_VITS
+}
+
+/**
  * 本地模型支持的单个音色
  *
  * ZipVoice 类零样本模型的"音色"由一段参考音频定义，用户侧无感知（体验仍是选音色→合成）。
@@ -26,6 +39,8 @@ enum class ModelDownloadStatus {
  *   内置音色（[isBundled] = true）时为 assets/voices/ 下的文件名
  * @param referenceText 参考音频的逐字稿，必须与音频内容完全一致，否则克隆质量明显下降
  * @param isBundled 参考音频是否随 APK 内置（assets/voices/）；false 时从模型目录读取
+ * @param speakerId 多说话人模型（如 MeloTTS）的说话人编号；参考音频类模型忽略此字段
+ * @param gender 声线性别（多说话人模型的声学分析结果），供角色分配按性别选池；未知为 null
  */
 data class LocalModelVoice(
     val voiceId: String,
@@ -33,7 +48,9 @@ data class LocalModelVoice(
     val language: String,
     val referenceFileName: String = "",
     val referenceText: String = "",
-    val isBundled: Boolean = false
+    val isBundled: Boolean = false,
+    val speakerId: Int = 0,
+    val gender: com.github.lonepheasantwarrior.talkify.book.model.Gender? = null
 )
 
 /**
@@ -76,5 +93,10 @@ data class LocalModelInfo(
      * 例如: "https://.../espeak-ng-data.tar.bz2" to "espeak-ng-data"
      * value 为 "" 表示解压到模型根目录。
      */
-    val archiveAssets: Map<String, String> = emptyMap()
+    val archiveAssets: Map<String, String> = emptyMap(),
+    /**
+     * 推理架构，决定 sherpa-onnx 走 VITS 还是 ZipVoice 路径。
+     * 默认 [LocalModelArchitecture.ZIPVOICE] 以兼容既有模型定义。
+     */
+    val architecture: LocalModelArchitecture = LocalModelArchitecture.ZIPVOICE
 )

@@ -1,11 +1,13 @@
 package com.github.lonepheasantwarrior.talkify.infrastructure.provider.local
 
+import com.github.lonepheasantwarrior.talkify.domain.model.LocalModelArchitecture
 import com.github.lonepheasantwarrior.talkify.domain.model.LocalModelInfo
 import com.github.lonepheasantwarrior.talkify.service.TtsLogger
 import com.k2fsa.sherpa.onnx.GenerationConfig
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsZipVoiceModelConfig
 import java.io.File
 
@@ -39,11 +41,15 @@ data class SynthesisResult(
 }
 
 /**
- * Sherpa-onnx 本地 TTS 推理引擎封装（ZipVoice 零样本流匹配架构）
+ * Sherpa-onnx 本地 TTS 推理引擎封装
  *
- * 封装 Sherpa-onnx 的 [OfflineTts]，提供：
+ * 支持两种架构，由 [LocalModelInfo.architecture] 决定：
+ * - **ZipVoice**（流匹配零样本）：音色由参考音频 + 逐字稿定义
+ * - **MeloTTS / VITS**（非自回归多说话人）：音色由 speaker id 决定，无需参考音频，
+ *   中文分词与注音由模型包内的 lexicon + dict 完成
+ *
+ * 提供：
  * - 惰性初始化（首次 synthesize 时加载模型）
- * - ZipVoice-Distill 零样本合成：音色由参考音频 + 逐字稿定义
  * - 文本→PCM 16bit 音频的本地推理
  * - 线程安全与资源释放
  *
@@ -56,6 +62,10 @@ class SherpaTtsEngine(
 ) {
 
     private val tag = "SherpaTtsEngine[${modelInfo.id}]"
+
+    /** 是否走 VITS 路径（MeloTTS 等），与 ZipVoice 路径互斥 */
+    private val isVits: Boolean
+        get() = modelInfo.architecture == LocalModelArchitecture.MELO_VITS
 
     @Volatile
     private var tts: OfflineTts? = null
@@ -110,6 +120,7 @@ class SherpaTtsEngine(
      * @param referenceSampleRate 参考音频采样率
      * @param referenceText 参考音频逐字稿，必须与音频内容完全一致
      * @param speed 语速倍率（1.0 为正常速度）
+     * @param speakerId 多说话人模型（MeloTTS/VITS）的说话人编号；ZipVoice 路径忽略
      * @return [SynthesisResult] 包含 PCM 音频数据及实际采样率
      * @throws IllegalStateException 引擎未初始化或已释放
      */
@@ -118,7 +129,8 @@ class SherpaTtsEngine(
         referenceAudio: FloatArray,
         referenceSampleRate: Int,
         referenceText: String,
-        speed: Float
+        speed: Float,
+        speakerId: Int = 0
     ): SynthesisResult {
         if (isReleased) throw IllegalStateException("Engine has been released")
 
@@ -129,7 +141,7 @@ class SherpaTtsEngine(
 
         val engine = tts ?: throw IllegalStateException("TTS engine not initialized")
 
-        val genConfig = buildGenerationConfig(referenceAudio, referenceSampleRate, referenceText, speed)
+        val genConfig = buildGenerationConfig(referenceAudio, referenceSampleRate, referenceText, speed, speakerId)
         val audio = engine.generateWithConfig(text, genConfig)
 
         val actualSampleRate = audio.sampleRate
@@ -156,6 +168,7 @@ class SherpaTtsEngine(
      * @param referenceSampleRate 参考音频采样率
      * @param referenceText 参考音频逐字稿
      * @param speed 语速倍率（0.5~2.0）
+     * @param speakerId 多说话人模型（MeloTTS/VITS）的说话人编号；ZipVoice 路径忽略
      * @param onAudioChunk 音频回调：(pcm16Data: ByteArray, sampleRate: Int) → Boolean
      * @return `true` 正常完成，`false` 被回调中断
      */
@@ -165,6 +178,7 @@ class SherpaTtsEngine(
         referenceSampleRate: Int,
         referenceText: String,
         speed: Float,
+        speakerId: Int = 0,
         onAudioChunk: (pcm16Data: ByteArray, sampleRate: Int) -> Boolean
     ): Boolean {
         if (isReleased) throw IllegalStateException("Engine has been released")
@@ -176,7 +190,7 @@ class SherpaTtsEngine(
         val engine = tts ?: throw IllegalStateException("TTS engine not initialized")
         val sampleRate = engine.sampleRate()
 
-        val genConfig = buildGenerationConfig(referenceAudio, referenceSampleRate, referenceText, speed)
+        val genConfig = buildGenerationConfig(referenceAudio, referenceSampleRate, referenceText, speed, speakerId)
 
         var completed = true
 
@@ -243,11 +257,13 @@ class SherpaTtsEngine(
     }
 
     /**
-     * 构建 ZipVoice 生成参数
+     * 构建生成参数
      *
-     * numSteps=4: 官方文档对 Distill 模型的推荐值（步数越少越快，音质略降）
-     * silenceScale=1: Kotlin 侧默认值 0.0 会被 JNI 原样透传，触发 C++ 端
-     * ScaleSilence(0) 把停顿压成数字零（非流式路径受影响），必须显式置 1 关闭
+     * **VITS/MeloTTS 路径**：只传 speed 与 speaker id，不需要参考音频。
+     * **ZipVoice 路径**：
+     *   numSteps=4: 官方文档对 Distill 模型的推荐值（步数越少越快，音质略降）
+     *   silenceScale=1: Kotlin 侧默认值 0.0 会被 JNI 原样透传，触发 C++ 端
+     *   ScaleSilence(0) 把停顿压成数字零（非流式路径受影响），必须显式置 1 关闭
      *
      * extra 分句参数（ZipVoice 实现只读 extra，OfflineTtsConfig.maxNumSentences
      * 对其无效——那是 VITS 等实现用的字段）：
@@ -261,24 +277,40 @@ class SherpaTtsEngine(
         referenceAudio: FloatArray,
         referenceSampleRate: Int,
         referenceText: String,
-        speed: Float
-    ): GenerationConfig = GenerationConfig(
-        silenceScale = 1.0f,
-        speed = speed.coerceIn(0.5f, 2.0f),
-        referenceAudio = referenceAudio,
-        referenceSampleRate = referenceSampleRate,
-        referenceText = referenceText,
-        numSteps = 4,
-        extra = mapOf(
-            "min_char_in_sentence" to "10",
-            "max_char_in_sentence" to "80"
+        speed: Float,
+        speakerId: Int = 0
+    ): GenerationConfig {
+        val safeSpeed = speed.coerceIn(0.5f, 2.0f)
+        if (isVits) {
+            return GenerationConfig(
+                silenceScale = 1.0f,
+                speed = safeSpeed,
+                sid = speakerId
+            )
+        }
+        return GenerationConfig(
+            silenceScale = 1.0f,
+            speed = safeSpeed,
+            referenceAudio = referenceAudio,
+            referenceSampleRate = referenceSampleRate,
+            referenceText = referenceText,
+            numSteps = 4,
+            extra = mapOf(
+                "min_char_in_sentence" to "10",
+                "max_char_in_sentence" to "80"
+            )
         )
-    )
+    }
 
     /**
-     * 根据模型类型构建 Sherpa-onnx 配置
+     * 根据模型架构构建 Sherpa-onnx 配置
+     *
+     * MeloTTS/VITS 路径用 lexicon + dictDir（包内自带中文分词与注音），不需要 espeak-ng-data；
+     * ZipVoice 路径需要 espeak-ng-data，且缺失时必须显式抛错（见下方注释）。
      */
     private fun buildTtsConfig(): OfflineTtsConfig {
+        if (isVits) return buildVitsConfig()
+
         val espeakDataDir = File(modelDir, "espeak-ng-data")
         // sherpa-onnx C++ Validate() 强制要求 dataDir 非空：
         //   if (data_dir.empty()) { LOGE(...); return false; }
@@ -305,6 +337,48 @@ class SherpaTtsEngine(
         return OfflineTtsConfig(
             model = OfflineTtsModelConfig(
                 zipvoice = zipVoiceConfig,
+                numThreads = 4,
+                provider = "cpu",
+                debug = false
+            ),
+            maxNumSentences = 1
+        )
+    }
+
+    /**
+     * MeloTTS / VITS 配置
+     *
+     * dataDir 留空：VITS 路径不使用 espeak，注音由 lexicon + dictDir 承担。
+     * noiseScale/noiseScaleW/lengthScale 取 MeloTTS 官方推荐值（0.667 / 0.8 / 1.0）。
+     *
+     * 模型文件名不写死：MeloTTS 是 model.onnx，fanchen 等社区包是
+     * vits-zh-hf-xxx.onnx——从注册表 requiredLocalFiles 里找 .onnx 声明。
+     */
+    private fun buildVitsConfig(): OfflineTtsConfig {
+        val dictDir = File(modelDir, "dict")
+        if (!dictDir.isDirectory) {
+            throw IllegalStateException(
+                "dict/ not found at ${dictDir.absolutePath}. " +
+                "MeloTTS model requires lexicon.txt + dict/ for Chinese G2P. " +
+                "Please re-download the model to restore this directory."
+            )
+        }
+
+        val declaredOnnx = modelInfo.requiredLocalFiles.firstOrNull { it.endsWith(".onnx") }
+        val vitsConfig = OfflineTtsVitsModelConfig(
+            model = if (declaredOnnx != null) resolveFilePath(declaredOnnx) else resolveFilePath("model.onnx"),
+            lexicon = resolveFilePath("lexicon.txt"),
+            tokens = resolveFilePath("tokens.txt"),
+            dataDir = "",
+            dictDir = dictDir.absolutePath,
+            noiseScale = 0.667f,
+            noiseScaleW = 0.8f,
+            lengthScale = 1.0f
+        )
+
+        return OfflineTtsConfig(
+            model = OfflineTtsModelConfig(
+                vits = vitsConfig,
                 numThreads = 4,
                 provider = "cpu",
                 debug = false

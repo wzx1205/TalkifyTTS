@@ -2,6 +2,8 @@ package com.github.lonepheasantwarrior.talkify.book.store
 
 import com.github.lonepheasantwarrior.talkify.book.model.Gender
 import com.github.lonepheasantwarrior.talkify.book.scan.CharacterScanner
+import com.github.lonepheasantwarrior.talkify.book.scan.CharacterProfile
+import com.github.lonepheasantwarrior.talkify.domain.model.LocalModelRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -62,5 +64,34 @@ class CharacterBookMatchTest {
         assertEquals(1, profiles.size)
         assertEquals("崔东山", profiles[0].name)
         assertEquals(10, profiles[0].dialogueCount)
+    }
+}
+
+/** fanchen 多声线包的自动分配：必须从 fanchen 自己的性别池取音色 */
+class FanchenAutoAssignTest {
+
+    private fun profile(name: String, gender: Gender) =
+        CharacterProfile(name = name, gender = gender, dialogueCount = 5, sampleQuote = "…")
+
+    @Test
+    fun assignUsesFanchenPoolsWhenModelProvided() {
+        val model = LocalModelRegistry.getModel("vits_zh_fanchen_c")!!
+        val bindings = VoiceAutoAssign.assign(
+            listOf(profile("裴钱", Gender.MALE), profile("宁姚", Gender.FEMALE)),
+            localModelInfo = model
+        )
+        assertTrue(bindings[0].voiceId.startsWith("fanchen_c_"))
+        assertTrue(bindings[1].voiceId.startsWith("fanchen_c_"))
+        // 性别对应池正确：裴钱(男) 拿到的音色性别标签应为 MALE
+        val male = model.voiceList.first { it.voiceId == bindings[0].voiceId }
+        val female = model.voiceList.first { it.voiceId == bindings[1].voiceId }
+        assertEquals(Gender.MALE, male.gender)
+        assertEquals(Gender.FEMALE, female.gender)
+    }
+
+    @Test
+    fun assignWithoutModelFallsBackToLocalPool() {
+        val bindings = VoiceAutoAssign.assign(listOf(profile("裴钱", Gender.MALE)))
+        assertTrue(bindings[0].voiceId.startsWith("zh_male_"))
     }
 }

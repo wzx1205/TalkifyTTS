@@ -86,10 +86,25 @@ fun BookCharactersScreen(
     var expandedVoiceFor by remember { mutableStateOf<String?>(null) }
 
     val bundledVoices = remember {
-        // 本地 ZipVoice 内置音色 + MiMo 预置音色 + Edge 免费音色，供跨供应商绑定
+        // 本地音色 + MiMo 预置音色 + Edge 免费音色，供跨供应商绑定
         // （运行时按当前供应商的音色表校验，不属于该表的绑定自动回退槽位）
-        val local = LocalVoiceCatalog.getVoices().map {
-            it.voiceId to "本地·${it.displayName}"
+        // 本地音色取"当前选中模型"的音色表：ZipVoice 走内置参考音频目录，
+        // MeloTTS 等 VITS 模型用自带 speaker 表，二者不能混用
+        val currentModel = runCatching {
+            com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.LocalModelConfigRepository(context)
+                .getConfig(com.github.lonepheasantwarrior.talkify.domain.model.ProviderIds.LocalModel.providerId)
+                .modelId
+                .ifBlank { com.github.lonepheasantwarrior.talkify.domain.model.ProviderIds.LocalModel.defaultModelId }
+                .let { com.github.lonepheasantwarrior.talkify.domain.model.LocalModelRegistry.getModel(it) }
+        }.getOrNull()
+        val local = if (currentModel != null &&
+            currentModel.architecture == com.github.lonepheasantwarrior.talkify.domain.model.LocalModelArchitecture.MELO_VITS
+        ) {
+            currentModel.voiceList.map { it.voiceId to "本地·${it.displayName}" }
+        } else {
+            LocalVoiceCatalog.getVoices().map {
+                it.voiceId to "本地·${it.displayName}"
+            }
         }
         val mimo = runCatching {
             com.github.lonepheasantwarrior.talkify.infrastructure.xml.VoiceXmlParser.parse(
@@ -287,6 +302,14 @@ fun BookCharactersScreen(
                         books = CharacterBookStore.list()
                     },
                     onAutoAssign = {
+                        // LOCAL 方案且当前模型是 fanchen 多声线包时，用包自己的性别池
+                        // （poolsForLocalModel 对其他模型回落内置池）；MIMO/EDGE 方案照旧
+                        val localModel = if (schemeState == VoiceAutoAssign.Scheme.LOCAL) runCatching {
+                            com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.LocalModelConfigRepository(context)
+                                .getConfig(com.github.lonepheasantwarrior.talkify.domain.model.ProviderIds.LocalModel.providerId)
+                                .modelId
+                                .let { com.github.lonepheasantwarrior.talkify.domain.model.LocalModelRegistry.getModel(it) }
+                        }.getOrNull() else null
                         val re = VoiceAutoAssign.assign(
                             current.characters.map {
                                 com.github.lonepheasantwarrior.talkify.book.scan.CharacterProfile(
@@ -296,7 +319,8 @@ fun BookCharactersScreen(
                                     sampleQuote = it.sampleQuote
                                 )
                             },
-                            schemeState
+                            schemeState,
+                            localModel
                         )
                         CharacterBookStore.save(current.copy(characters = re))
                         books = CharacterBookStore.list()
