@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Talkify</string>
+    <string name="app_name">Talkify 多角色听书版</string>
 
     <!-- 通用 -->
     <string name="cancel">取消</string>
@@ -32,6 +32,8 @@
     <!-- 配置编辑 -->
     <string name="config_title_format">%1$s 配置</string>
     <string name="api_key_label">API Key</string>
+    <string name="hybrid_mimo_key_label">MiMo API Key（旁白）</string>
+    <string name="hybrid_mimo_key_hint">旁白由小米 MiMo 合成，需要 Key。留空则自动复用「小米」供应商里保存的 Key。</string>
     <string name="voice_select_label">声音选择</string>
     <string name="api_url_label">API 地址</string>
     <string name="model_id_label">模型 ID</string>
@@ -65,7 +67,7 @@
     <string name="tts_error_no_provider">未找到可用的 TTS 供应商</string>
     <string name="tts_error_provider_not_found">供应商不存在</string>
     <string name="tts_error_provider_not_configured">合成供应商未配置</string>
-    <string name="tts_error_config_not_ready">请完成Talkify参数设置</string>
+    <string name="tts_error_config_not_ready">请完成 Talkify 多角色听书版 参数设置</string>
     <string name="tts_error_no_provider_id_available">合成供应商未选择</string>
     <string name="tts_error_provider_not_ready">合成供应商未初始化</string>
     <string name="tts_error_synthesis_failed">语音合成失败</string>
@@ -94,14 +96,14 @@
 
     <!-- 通知权限 -->
     <string name="notification_permission_title">通知权限</string>
-    <string name="notification_permission_message">Talkify 是一款语音合成应用，工作时需要在后台显示朗读状态通知。授予通知权限后，您可以更好地了解应用运行状态。</string>
+    <string name="notification_permission_message">Talkify 多角色听书版是一款离线语音合成应用，工作时需要在后台显示朗读状态通知。授予通知权限后，您可以更好地了解应用运行状态。</string>
     <string name="notification_permission_agree">同意</string>
     <string name="notification_permission_ask_later">以后再说</string>
     <string name="notification_permission_denied">未授予通知权限，部分功能可能受限</string>
 
     <!-- 电池优化 -->
     <string name="battery_optimization_title">允许后台运行</string>
-    <string name="battery_optimization_message">Talkify 在后台进行语音合成时，可能会被系统电池优化策略中断网络连接，导致朗读停止。建议您允许 Talkify 忽略电池优化，以获得稳定的后台朗读体验。</string>
+    <string name="battery_optimization_message">Talkify 多角色听书版在后台进行语音合成时，可能会被系统电池优化策略中断网络连接，导致朗读停止。建议您允许本应用忽略电池优化，以获得稳定的后台朗读体验。</string>
     <string name="battery_optimization_allow">去设置</string>
     <string name="battery_optimization_skip">以后再说</string>
     <string name="battery_optimization_open_failed">无法打开电池优化设置页面，请手动去系统设置中开启</string>
@@ -124,21 +126,21 @@
     <string name="crash_dialog_message">很抱歉，应用发生了意外错误。\n\n错误信息：\n%1$s\n\n请选择操作：</string>
     <string name="crash_dialog_restart">重启应用</string>
     <string name="crash_dialog_report">关闭</string>
-    <string name="crash_notification_message">Talkify 发生错误，请点击查看详情</string>
+    <string name="crash_notification_message">Talkify 多角色听书版发生错误，请点击查看详情</string>
 
     <!-- 前台服务通知 -->
     <string name="notification_channel_name">朗读服务</string>
     <string name="notification_channel_description">显示正在进行的朗读服务状态</string>
-    <string name="notification_title">Talkify 正在朗读</string>
+    <string name="notification_title">Talkify 多角色听书版正在朗读</string>
     <string name="notification_text">点击打开应用</string>
 
     <!-- 默认供应商提示 -->
     <string name="default_provider_banner_title">设为默认供应商</string>
-    <string name="default_provider_banner_content">点击此处将 Talkify 设为默认语音合成供应商</string>
+    <string name="default_provider_banner_content">点击此处将 Talkify 多角色听书版设为默认语音合成引擎</string>
 
     <!-- 关于页面提示 -->
     <string name="about_page_hint_banner_title">关于应用</string>
-    <string name="about_page_hint_banner_content">点击上方的 Talkify 标题可打开关于页面</string>
+    <string name="about_page_hint_banner_content">点击上方的标题可打开关于页面</string>
 
     <!-- 关于页面 -->
     <string name="about_title">关于</string>
@@ -181,6 +183,10 @@
     <string name="book_characters_scanning">扫描中…</string>
     <string name="book_characters_empty_hint">导入一本 EPUB，自动扫描全书角色并分配声音。\n开启「多角色听书」后朗读时即按角色切换声线。</string>
     <string name="book_characters_auto_assign">按对白量自动分配声音</string>
+    <string name="llm_analysis_title">AI 角色分析（本地模型）</string>
+    <string name="llm_analysis_desc">用手机本地小模型逐句判断说话人、性别与语气，比关键词更准。\n模型约 460MB，仅需下载一次；分析失败会自动回退规则结果，不影响朗读。</string>
+    <string name="llm_analysis_download">下载分析模型（约 460MB）</string>
+    <string name="llm_analysis_ready">模型已就绪，朗读时将自动校正角色与语气</string>
     <string name="book_characters_delete">删除</string>
     <string name="book_characters_dialogue_format">%1$d 句对白</string>
     <string name="book_characters_narrator">旁白</string>

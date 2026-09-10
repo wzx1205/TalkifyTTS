@@ -252,20 +252,32 @@ class HybridProvider : AbstractTtsProvider() {
         }
     }
 
-    /** MiMo 旁白配置：角色册旁白绑定（非 Edge 前缀）优先，情感转风格指令 */
+    /**
+     * MiMo 旁白配置
+     *
+     * Key 优先级：混合配置里独立填的 [HybridConfig.apiKey] → 「小米」供应商保存的 key
+     * （混合模式没有自己的 key 时也能开箱即用，前提是小米供应商配置过）。
+     *
+     * 旁白音色绑定只接受 MiMo 系音色：角色册旁白若绑了 Edge / 本地音色，
+     * 透传给 MiMo 会直接 4xx，触发回落到 Edge 云野——那正是"旁白冰糖没生效"
+     * 表面上听起来的原因之一，所以必须在源头挡掉，回落到混合自己的默认旁白。
+     */
     private fun mimoConfig(
         hybrid: com.github.lonepheasantwarrior.talkify.domain.model.HybridConfig,
         narratorBinding: String?,
         emotion: EmotionTag?
     ): XiaomiConfig {
         val base = xiaomiConfig ?: XiaomiConfig()
+        val effectiveKey = hybrid.apiKey.ifBlank { base.apiKey }
         val narrator = when {
-            !narratorBinding.isNullOrBlank() && !narratorBinding.startsWith("zh-CN-") -> narratorBinding
+            narratorBinding != null &&
+                com.github.lonepheasantwarrior.talkify.book.store.VoiceAutoAssign.schemeOf(narratorBinding) ==
+                com.github.lonepheasantwarrior.talkify.book.store.VoiceAutoAssign.Scheme.MIMO -> narratorBinding
             hybrid.voiceId.isNotBlank() -> hybrid.voiceId
             else -> MIMO_NARRATOR
         }
         val style = emotion?.let { EMOTION_STYLES[it.name] }.orEmpty()
-        return base.copy(voiceId = narrator, styleInstruction = style)
+        return base.copy(apiKey = effectiveKey, voiceId = narrator, styleInstruction = style)
     }
 
     private fun slotVoiceNarrator(): String? = CharacterBookStore.activeNarratorVoice()

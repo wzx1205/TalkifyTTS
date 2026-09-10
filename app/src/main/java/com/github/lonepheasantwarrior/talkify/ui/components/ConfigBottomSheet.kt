@@ -30,9 +30,11 @@ import com.github.lonepheasantwarrior.talkify.domain.model.AliyunBailianConfig
 import com.github.lonepheasantwarrior.talkify.domain.model.AzureConfig
 import com.github.lonepheasantwarrior.talkify.domain.model.BaseProviderConfig
 import com.github.lonepheasantwarrior.talkify.domain.model.ConfigItem
+import com.github.lonepheasantwarrior.talkify.domain.model.HybridConfig
 import com.github.lonepheasantwarrior.talkify.domain.model.LanguageBoost
 import com.github.lonepheasantwarrior.talkify.domain.model.LocalModelConfig
 import com.github.lonepheasantwarrior.talkify.domain.model.LocalModelRegistry
+import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.LocalModelVoiceRepository
 import com.github.lonepheasantwarrior.talkify.domain.model.MiniMaxConfig
 import com.github.lonepheasantwarrior.talkify.domain.model.ModelDownloadStatus
 import com.github.lonepheasantwarrior.talkify.domain.model.ProviderIds
@@ -132,6 +134,10 @@ fun ConfigBottomSheet(
                 val localSaved = savedConfig as? LocalModelConfig
                 localSaved ?: defaultConfig
             }
+            is HybridConfig -> {
+                val hybridSaved = savedConfig as? HybridConfig
+                hybridSaved ?: defaultConfig
+            }
             else -> defaultConfig
         }
     }
@@ -160,7 +166,11 @@ fun ConfigBottomSheet(
         )
     }
 
-    var availableVoices by remember(currentProvider, isOpen) {
+    // 当前下拉里选中的本地模型：音色表随模型架构不同（ZipVoice 参考音频目录 /
+    // MeloTTS 自带 speaker 表），切换模型必须重新加载，否则还是上一个模型的音色
+    val selectedLocalModelId = configItems.firstOrNull { it.key == "model_id" }?.value
+
+    var availableVoices by remember(currentProvider, isOpen, selectedLocalModelId) {
         mutableStateOf<List<VoiceInfo>>(emptyList())
     }
     var isVoicesLoading by remember { mutableStateOf(false) }
@@ -170,10 +180,17 @@ fun ConfigBottomSheet(
     var pendingModelId by remember { mutableStateOf("") }
     var pendingModelDisplayName by remember { mutableStateOf("") }
 
-    LaunchedEffect(currentProvider, isOpen) {
+    LaunchedEffect(currentProvider, isOpen, selectedLocalModelId) {
         isVoicesLoading = true
         try {
-            availableVoices = voiceRepository.getVoicesForProvider(currentProvider)
+            availableVoices = if (currentProvider.id == ProviderIds.LocalModel.providerId) {
+                // 按弹窗内当前选中的模型查（可能尚未保存），不能读旧配置
+                val model = selectedLocalModelId?.let { LocalModelRegistry.getModel(it) }
+                    ?: LocalModelRegistry.getModel(ProviderIds.LocalModel.defaultModelId)
+                model?.let { LocalModelVoiceRepository.voicesForModel(it) } ?: emptyList()
+            } else {
+                voiceRepository.getVoicesForProvider(currentProvider)
+            }
         } finally {
             isVoicesLoading = false
         }
@@ -465,6 +482,20 @@ private fun buildConfigItems(
                 )
             }
         }
+        is HybridConfig -> {
+            // 旁白走 MiMo：这里可独立填 MiMo Key；留空则运行时复用「小米」供应商的配置。
+            // 不能用 getLabel("api_key") 判空——HybridProvider 未在 configLabels 注册该键，
+            // 会拿到 null 把整个输入框吞掉
+            items.add(
+                ConfigItem(
+                    key = "api_key",
+                    label = context.getString(R.string.hybrid_mimo_key_label),
+                    value = config.apiKey,
+                    isPassword = true,
+                    supportingText = context.getString(R.string.hybrid_mimo_key_hint)
+                )
+            )
+        }
         is LocalModelConfig -> {
             // 模型选择：从 LocalModelRegistry 构建下拉选项（含下载状态标记）
             val modelLabel = getLabel("model_id") ?: context.getString(R.string.model_select_label)
@@ -643,6 +674,13 @@ private fun buildConfigFromItems(
                 voiceId = voiceId,
                 apiUrl = "",
                 modelId = modelId
+            )
+        }
+        is HybridConfig -> {
+            val hybridSaved = defaultConfig as? HybridConfig ?: HybridConfig()
+            hybridSaved.copy(
+                voiceId = voiceId,
+                apiKey = items.find { it.key == "api_key" }?.value.orEmpty()
             )
         }
         else -> defaultConfig
