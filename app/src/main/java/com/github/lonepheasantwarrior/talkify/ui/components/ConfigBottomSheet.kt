@@ -46,8 +46,11 @@ import com.github.lonepheasantwarrior.talkify.domain.repository.ProviderConfigRe
 import com.github.lonepheasantwarrior.talkify.domain.repository.VoiceInfo
 import com.github.lonepheasantwarrior.talkify.domain.repository.VoiceRepository
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.local.LocalModelManager
+import com.github.lonepheasantwarrior.talkify.infrastructure.app.telemetry.AppActionTracker
+import com.github.lonepheasantwarrior.talkify.infrastructure.app.telemetry.AppPageTracker
 import com.github.lonepheasantwarrior.talkify.service.provider.TtsProviderApi
 import com.github.lonepheasantwarrior.talkify.service.provider.TtsProviderFactory
+import com.github.lonepheasantwarrior.talkify.ui.viewmodel.localmodel.DownloadProgress
 
 /**
  * 配置底部弹窗
@@ -67,6 +70,7 @@ import com.github.lonepheasantwarrior.talkify.service.provider.TtsProviderFactor
  * @param voiceRepository 声音仓储
  * @param onConfigSaved 配置保存后的回调
  * @param onDownloadRequested 请求下载本地模型时回调（参数为 modelId）
+ * @param downloadProgress 本地模型下载进度（下载中在模型项下方展示进度条；null 或已完成不展示）
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -78,7 +82,8 @@ fun ConfigBottomSheet(
     configRepository: ProviderConfigRepository,
     voiceRepository: VoiceRepository,
     onConfigSaved: (() -> Unit)? = null,
-    onDownloadRequested: ((String) -> Unit)? = null
+    onDownloadRequested: ((String) -> Unit)? = null,
+    downloadProgress: DownloadProgress? = null
 ) {
     val sheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = true
@@ -87,7 +92,10 @@ fun ConfigBottomSheet(
     val context = LocalContext.current
 
     LaunchedEffect(isOpen) {
-        if (!isOpen && sheetState.isVisible) {
+        if (isOpen) {
+            // 抽屉打开 = "去了哪里"，按虚拟路由上报 pageview（覆盖 FAB 与未配置引导等所有入口）
+            AppPageTracker.open(AppPageTracker.PATH_CONFIG, "Config")
+        } else if (sheetState.isVisible) {
             sheetState.hide()
         }
     }
@@ -248,6 +256,10 @@ fun ConfigBottomSheet(
                                 // 模型未下载，显示下载确认对话框
                                 pendingModelId = modelId
                                 pendingModelDisplayName = modelInfo.displayName
+                                AppPageTracker.open(
+                                    AppPageTracker.PATH_MODEL_DOWNLOAD_CONFIRM,
+                                    "ModelDownloadConfirm"
+                                )
                                 showDownloadDialog = true
                                 return@ConfigEditor
                             }
@@ -258,6 +270,7 @@ fun ConfigBottomSheet(
                         onDismiss()
                     },
                     advancedItemKeys = advancedItemKeys,
+                    downloadingModelProgress = downloadProgress,
                     onVoiceSelected = { voice ->
                         val voiceItem = configItems.find { it.key == "voice_id" }
                         if (voiceItem != null) {
@@ -278,6 +291,12 @@ fun ConfigBottomSheet(
         val modelInfo = LocalModelRegistry.getModel(pendingModelId)
         AlertDialog(
             onDismissRequest = {
+                AppActionTracker.modelDownloadDialog(
+                    pendingModelId,
+                    modelInfo?.downloadSizeDisplay.orEmpty(),
+                    AppActionTracker.SOURCE_CONFIG_SHEET,
+                    confirmed = false
+                )
                 showDownloadDialog = false
             },
             title = {
@@ -300,6 +319,12 @@ fun ConfigBottomSheet(
             confirmButton = {
                 TextButton(
                     onClick = {
+                        AppActionTracker.modelDownloadDialog(
+                            pendingModelId,
+                            modelInfo?.downloadSizeDisplay.orEmpty(),
+                            AppActionTracker.SOURCE_CONFIG_SHEET,
+                            confirmed = true
+                        )
                         showDownloadDialog = false
                         // 先保存配置
                         val newConfig = buildConfigFromItems(configItems, defaultConfig)
@@ -319,6 +344,12 @@ fun ConfigBottomSheet(
             dismissButton = {
                 TextButton(
                     onClick = {
+                        AppActionTracker.modelDownloadDialog(
+                            pendingModelId,
+                            modelInfo?.downloadSizeDisplay.orEmpty(),
+                            AppActionTracker.SOURCE_CONFIG_SHEET,
+                            confirmed = false
+                        )
                         showDownloadDialog = false
                         // 仅保存配置，不下载
                         val newConfig = buildConfigFromItems(configItems, defaultConfig)

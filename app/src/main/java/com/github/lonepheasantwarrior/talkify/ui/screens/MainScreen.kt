@@ -10,6 +10,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.clickable
@@ -38,6 +42,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LargeTopAppBar
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -49,6 +54,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -64,6 +70,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -90,6 +97,8 @@ import com.github.lonepheasantwarrior.talkify.infrastructure.app.repo.SharedPref
 import com.github.lonepheasantwarrior.talkify.llm.LlmBookConfig
 import com.github.lonepheasantwarrior.talkify.llm.LlmEngine
 import com.github.lonepheasantwarrior.talkify.llm.LlmModelDownloader
+import com.github.lonepheasantwarrior.talkify.infrastructure.app.telemetry.AppActionTracker
+import com.github.lonepheasantwarrior.talkify.infrastructure.app.telemetry.AppPageTracker
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.local.LocalModelManager
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.AliyunBailianConfigRepository
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.AliyunBailianVoiceRepository
@@ -104,6 +113,10 @@ import com.github.lonepheasantwarrior.talkify.ui.components.ProviderSelector
 import com.github.lonepheasantwarrior.talkify.ui.components.UpdateDialog
 import com.github.lonepheasantwarrior.talkify.ui.components.VoicePreview
 import com.github.lonepheasantwarrior.talkify.ui.components.rememberTelemetryScrollObserver
+import com.github.lonepheasantwarrior.talkify.ui.theme.SharedKeyBrandMark
+import com.github.lonepheasantwarrior.talkify.ui.theme.SharedKeyBrandTitle
+import com.github.lonepheasantwarrior.talkify.ui.theme.TalkifyMotion
+import com.github.lonepheasantwarrior.talkify.ui.theme.sharedBrandBounds
 import com.github.lonepheasantwarrior.talkify.ui.viewmodel.MainViewModel
 import com.github.lonepheasantwarrior.talkify.ui.viewmodel.startup.StartupState
 import kotlinx.coroutines.Dispatchers
@@ -111,13 +124,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalSharedTransitionApi::class)
 @Composable
 fun MainScreen(
     modifier: Modifier = Modifier,
     viewModel: MainViewModel = viewModel(),
     onAboutClick: () -> Unit = {},
-    onBookCharactersClick: () -> Unit = {}
+    onBookCharactersClick: () -> Unit = {},
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null
 ) {
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val context = LocalContext.current
@@ -150,7 +165,10 @@ fun MainScreen(
     // 权限请求 Launcher
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
-    ) { _ ->
+    ) { granted ->
+        AppActionTracker.notificationPermission(
+            if (granted) AppActionTracker.ACTION_GRANTED else AppActionTracker.ACTION_DENIED
+        )
         viewModel.onNotificationPermissionResult()
     }
 
@@ -196,6 +214,7 @@ fun MainScreen(
     // 语音预览状态观察
     val isPreviewPlaying by viewModel.isPreviewPlaying.collectAsState()
     val previewError by viewModel.previewErrorMessage.collectAsState()
+    val previewWaveform by viewModel.previewWaveform.collectAsState()
     // 提示文案提升到 Composable 顶层获取（回调 lambda 内不可调用 stringResource）
     val emptyInputHint = stringResource(R.string.input_empty_hint)
     val providerNotConfiguredHint = stringResource(R.string.provider_not_configured_hint)
@@ -235,6 +254,13 @@ fun MainScreen(
     }
     var inputText by remember { mutableStateOf(defaultInputText) }
     val isConfigSheetOpen by viewModel.isConfigSheetOpen.collectAsState()
+
+    // 预览"播放"按钮点击埋点（含被拦截的分支，构成完整漏斗）
+    val trackPlayClick: (String) -> Unit = { outcome ->
+        AppActionTracker.previewPlayClick(
+            currentProvider.id, selectedVoice?.voiceId.orEmpty(), inputText.length, outcome
+        )
+    }
 
     var savedConfig by remember(currentProvider.id) {
         mutableStateOf(getConfigRepository(currentProvider.id).getConfig(currentProvider.id))
@@ -289,6 +315,36 @@ fun MainScreen(
         topBar = {
             LargeTopAppBar(
                 title = {
+                    // LargeTopAppBar 内部（TwoRowsTopAppBar）会把 title 槽位同时组合进折叠行与
+                    // 展开行：折叠行固定在左上角（ambient 字号 TitleLarge 22sp），展开行即大标题
+                    // 位置（HeadlineMedium 28sp）。共享元素只能注册在"当前可见行"的实例上，
+                    // 否则同一 shared key 有两份边界，转场目标在两者间漂移——表现为先飞向
+                    // 左上角折叠行、结束时回落到展开行。
+                    val isBottomRow = LocalTextStyle.current.fontSize.value >= 25f
+                    val isBottomRowVisible by remember {
+                        derivedStateOf { scrollBehavior.state.collapsedFraction < 0.5f }
+                    }
+                    val attachShared = isBottomRow == isBottomRowVisible
+                    val brandMarkModifier =
+                        if (attachShared) {
+                            Modifier.sharedBrandBounds(
+                                SharedKeyBrandMark,
+                                sharedTransitionScope,
+                                animatedVisibilityScope
+                            )
+                        } else {
+                            Modifier
+                        }
+                    val brandTitleModifier =
+                        if (attachShared) {
+                            Modifier.sharedBrandBounds(
+                                SharedKeyBrandTitle,
+                                sharedTransitionScope,
+                                animatedVisibilityScope
+                            )
+                        } else {
+                            Modifier
+                        }
                     Row(
                         modifier = Modifier.clickable(onClick = onAboutClick),
                         verticalAlignment = Alignment.CenterVertically
@@ -298,13 +354,15 @@ fun MainScreen(
                             color = MaterialTheme.colorScheme.primary,
                             animated = false,
                             minHeight = 8.dp,
-                            maxHeight = 24.dp
+                            maxHeight = 24.dp,
+                            modifier = brandMarkModifier
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
                                 text = stringResource(R.string.app_name),
-                                style = MaterialTheme.typography.headlineLarge
+                                style = MaterialTheme.typography.headlineLarge,
+                                modifier = brandTitleModifier
                             )
                             Text(
                                 text = stringResource(R.string.app_subtitle),
@@ -338,8 +396,14 @@ fun MainScreen(
 
             AnimatedVisibility(
                 visible = !aboutPageOpenedBefore && !aboutHintDismissed && startupState == StartupState.Completed,
-                enter = slideInVertically(initialOffsetY = { -it }),
-                exit = slideOutVertically(targetOffsetY = { -it })
+                enter = slideInVertically(
+                    initialOffsetY = { -it },
+                    animationSpec = TalkifyMotion.spatialDefaultOf(IntOffset.VisibilityThreshold)
+                ),
+                exit = slideOutVertically(
+                    targetOffsetY = { -it },
+                    animationSpec = TalkifyMotion.spatialDefaultOf(IntOffset.VisibilityThreshold)
+                )
             ) {
                 AboutPageHintBanner(
                     onClick = { aboutHintDismissed = true }
@@ -348,11 +412,23 @@ fun MainScreen(
 
             AnimatedVisibility(
                 visible = !isDefaultProvider && startupState == StartupState.Completed,
-                enter = slideInVertically(initialOffsetY = { -it }),
-                exit = slideOutVertically(targetOffsetY = { -it })
+                enter = slideInVertically(
+                    initialOffsetY = { -it },
+                    animationSpec = TalkifyMotion.spatialDefaultOf(IntOffset.VisibilityThreshold)
+                ),
+                exit = slideOutVertically(
+                    targetOffsetY = { -it },
+                    animationSpec = TalkifyMotion.spatialDefaultOf(IntOffset.VisibilityThreshold)
+                )
             ) {
                  DefaultProviderBanner(
-                     onClick = { viewModel.openTtsSettings() }
+                     onClick = {
+                         AppActionTracker.settingsJump(
+                             AppActionTracker.TARGET_TTS,
+                             AppActionTracker.SOURCE_DEFAULT_BANNER
+                         )
+                         viewModel.openTtsSettings()
+                     }
                  )
             }
 
@@ -386,9 +462,17 @@ fun MainScreen(
                     NetworkBlockedDialog(
                         offlineCapable = state.offlineCapable,
                         onOpenSettings = {
+                            AppActionTracker.startupNetworkAction(
+                                AppActionTracker.ACTION_OPEN_SETTINGS,
+                                state.offlineCapable
+                            )
                             viewModel.openNetworkSettings()
                         },
                         onAcknowledge = {
+                            AppActionTracker.startupNetworkAction(
+                                AppActionTracker.ACTION_ACKNOWLEDGED,
+                                state.offlineCapable
+                            )
                             viewModel.onNetworkBlockedAcknowledged()
                         }
                     )
@@ -410,6 +494,7 @@ fun MainScreen(
                             currentProvider = displayProvider,
                             availableProviders = displayProviders,
                             onProviderSelected = { provider ->
+                                AppActionTracker.providerSwitched(currentProvider.id, provider.id)
                                 currentProvider = provider
                                 appConfigRepository.saveSelectedProviderId(provider.id)
                             },
@@ -473,10 +558,15 @@ fun MainScreen(
                             onInputTextChange = { inputText = it },
                             availableVoices = availableVoices,
                             selectedVoice = selectedVoice,
-                            onVoiceSelected = { voice -> selectedVoice = voice },
+                            onVoiceSelected = { voice ->
+                                AppActionTracker.previewVoiceSelected(currentProvider.id, voice.voiceId)
+                                selectedVoice = voice
+                            },
                             isPlaying = isPreviewPlaying,
+                            waveform = previewWaveform,
                             onPlayClick = {
                                 if (inputText.isBlank()) {
+                                    trackPlayClick(AppActionTracker.OUTCOME_EMPTY_TEXT)
                                     scope.launch {
                                         snackbarHostState.showSnackbar(emptyInputHint)
                                     }
@@ -536,8 +626,14 @@ fun MainScreen(
                                 if (!isConfigured) {
                                     // 本地模型：已选择模型但未下载 → 弹出下载确认对话框
                                     if (config is LocalModelConfig && config.modelId.isNotBlank()) {
+                                        trackPlayClick(AppActionTracker.OUTCOME_MODEL_NEED_DOWNLOAD)
+                                        AppPageTracker.open(
+                                            AppPageTracker.PATH_MODEL_DOWNLOAD_CONFIRM,
+                                            "ModelDownloadConfirm"
+                                        )
                                         pendingLocalModelConfig = config
                                     } else {
+                                        trackPlayClick(AppActionTracker.OUTCOME_NOT_CONFIGURED)
                                         scope.launch {
                                             snackbarHostState.showSnackbar(providerNotConfiguredHint)
                                         }
@@ -550,11 +646,13 @@ fun MainScreen(
                                 if (config is LocalModelConfig) {
                                     val conflict = viewModel.checkLocalModelPlayable(config.modelId)
                                     if (conflict != null) {
+                                        trackPlayClick(AppActionTracker.OUTCOME_MODEL_DOWNLOADING)
                                         scope.launch { snackbarHostState.showSnackbar(conflict) }
                                         return@VoicePreview
                                     }
                                 }
 
+                                trackPlayClick(AppActionTracker.OUTCOME_STARTED)
                                 viewModel.playPreview(currentProvider.id, inputText, config)
                             },
                             onStopClick = {
@@ -573,11 +671,20 @@ fun MainScreen(
 
     ConfigBottomSheet(
         onConfigSaved = {
-            savedConfig = getConfigRepository(currentProvider.id).getConfig(currentProvider.id)
+            val freshConfig = getConfigRepository(currentProvider.id).getConfig(currentProvider.id)
+            AppActionTracker.configSaved(
+                currentProvider.id,
+                isLocalModel = freshConfig is LocalModelConfig,
+                hasCustomApiUrl = freshConfig.apiUrl.isNotBlank() && freshConfig !is LocalModelConfig,
+                hasCustomModelId = freshConfig.modelId.isNotBlank() && freshConfig !is LocalModelConfig,
+                voiceId = freshConfig.voiceId
+            )
+            savedConfig = freshConfig
             configVersion++
         },
         isOpen = isConfigSheetOpen,
         onDismiss = { viewModel.closeConfigSheet() },
+        downloadProgress = downloadProgress,
         currentProvider = currentProvider,
         configRepository = getConfigRepository(currentProvider.id),
         voiceRepository = getVoiceRepository(currentProvider.id),
@@ -594,7 +701,15 @@ fun MainScreen(
     if (pendingConfig != null) {
         val modelInfo = LocalModelRegistry.getModel(pendingConfig.modelId)
         AlertDialog(
-            onDismissRequest = { pendingLocalModelConfig = null },
+            onDismissRequest = {
+                AppActionTracker.modelDownloadDialog(
+                    pendingConfig.modelId,
+                    modelInfo?.downloadSizeDisplay.orEmpty(),
+                    AppActionTracker.SOURCE_PREVIEW,
+                    confirmed = false
+                )
+                pendingLocalModelConfig = null
+            },
             title = { Text(stringResource(R.string.model_download_confirm_title)) },
             text = {
                 Text(
@@ -607,6 +722,12 @@ fun MainScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
+                        AppActionTracker.modelDownloadDialog(
+                            pendingConfig.modelId,
+                            modelInfo?.downloadSizeDisplay.orEmpty(),
+                            AppActionTracker.SOURCE_PREVIEW,
+                            confirmed = true
+                        )
                         pendingLocalModelConfig = null
                         val conflict = viewModel.startModelDownload(pendingConfig.modelId)
                         if (conflict != null) {
@@ -618,7 +739,17 @@ fun MainScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { pendingLocalModelConfig = null }) {
+                TextButton(
+                    onClick = {
+                        AppActionTracker.modelDownloadDialog(
+                            pendingConfig.modelId,
+                            modelInfo?.downloadSizeDisplay.orEmpty(),
+                            AppActionTracker.SOURCE_PREVIEW,
+                            confirmed = false
+                        )
+                        pendingLocalModelConfig = null
+                    }
+                ) {
                     Text(stringResource(android.R.string.cancel))
                 }
             }
@@ -631,12 +762,17 @@ fun MainScreen(
         StartupState.RequestingNotificationPermission -> {
             NotificationPermissionDialog(
                 onConfirm = {
+                    AppActionTracker.notificationPermission(AppActionTracker.ACTION_REQUESTED)
                     val permission = Manifest.permission.POST_NOTIFICATIONS
                     if (activity != null) {
                         val shouldShowRationale = activity.shouldShowRequestPermissionRationale(permission)
                         val hasRequestedBefore = viewModel.hasRequestedNotificationPermission()
 
                         if (!shouldShowRationale && hasRequestedBefore) {
+                            AppActionTracker.settingsJump(
+                                AppActionTracker.TARGET_NOTIFICATION,
+                                AppActionTracker.SOURCE_PERMISSION_DIALOG
+                            )
                             viewModel.openNotificationSettings()
                             viewModel.onNotificationPermissionResult()
                         } else {
@@ -648,6 +784,7 @@ fun MainScreen(
                     }
                 },
                 onDismiss = {
+                    AppActionTracker.notificationPermission(AppActionTracker.ACTION_SKIPPED)
                     viewModel.onSkipNotificationPermission()
                 }
             )
@@ -655,6 +792,7 @@ fun MainScreen(
         StartupState.RequestingBatteryOptimization -> {
             BatteryOptimizationDialog(
                 onConfirm = {
+                    AppActionTracker.batteryOptimization(AppActionTracker.ACTION_GO_SETTINGS)
                     try {
                         val intent = PowerOptimizationHelper.createRequestIgnoreBatteryOptimizationsIntent(context)
                         context.startActivity(intent)
@@ -672,6 +810,7 @@ fun MainScreen(
                     viewModel.onBatteryOptimizationResult()
                 },
                 onDismiss = {
+                    AppActionTracker.batteryOptimization(AppActionTracker.ACTION_SKIPPED)
                     viewModel.onBatteryOptimizationSkipped()
                 }
             )

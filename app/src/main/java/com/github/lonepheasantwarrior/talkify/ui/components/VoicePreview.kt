@@ -2,10 +2,7 @@ package com.github.lonepheasantwarrior.talkify.ui.components
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -54,9 +51,11 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.github.lonepheasantwarrior.talkify.R
 import com.github.lonepheasantwarrior.talkify.domain.repository.VoiceInfo
+import com.github.lonepheasantwarrior.talkify.ui.theme.TalkifyMotion
 
 @Composable
 fun VoicePreview(
@@ -66,6 +65,7 @@ fun VoicePreview(
     selectedVoice: VoiceInfo?,
     onVoiceSelected: (VoiceInfo) -> Unit,
     isPlaying: Boolean,
+    waveform: FloatArray = FloatArray(0),
     onPlayClick: () -> Unit,
     onStopClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -150,6 +150,7 @@ fun VoicePreview(
             ) {
                 PlayStopButton(
                     isPlaying = isPlaying,
+                    waveform = waveform,
                     onPlayClick = onPlayClick,
                     onStopClick = onStopClick
                 )
@@ -211,7 +212,7 @@ private fun VoiceItem(
         } else {
             MaterialTheme.colorScheme.surfaceVariant
         },
-        animationSpec = tween(250),
+        animationSpec = TalkifyMotion.effectsDefaultOf(),
         label = "voice_chip_container"
     )
     val contentColor by animateColorAsState(
@@ -220,7 +221,7 @@ private fun VoiceItem(
         } else {
             MaterialTheme.colorScheme.onSurfaceVariant
         },
-        animationSpec = tween(250),
+        animationSpec = TalkifyMotion.effectsDefaultOf(),
         label = "voice_chip_content"
     )
 
@@ -261,6 +262,7 @@ private fun VoiceItem(
 @Composable
 private fun PlayStopButton(
     isPlaying: Boolean,
+    waveform: FloatArray,
     onPlayClick: () -> Unit,
     onStopClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -270,10 +272,7 @@ private fun PlayStopButton(
     val isPressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
         targetValue = if (isPressed) 0.96f else 1f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMediumLow
-        ),
+        animationSpec = TalkifyMotion.spatialFast,
         label = "play_button_scale"
     )
     val containerColor by animateColorAsState(
@@ -282,7 +281,7 @@ private fun PlayStopButton(
         } else {
             MaterialTheme.colorScheme.primaryContainer
         },
-        animationSpec = tween(250),
+        animationSpec = TalkifyMotion.effectsDefaultOf(),
         label = "play_button_container"
     )
     val contentColor by animateColorAsState(
@@ -291,7 +290,7 @@ private fun PlayStopButton(
         } else {
             MaterialTheme.colorScheme.onPrimaryContainer
         },
-        animationSpec = tween(250),
+        animationSpec = TalkifyMotion.effectsDefaultOf(),
         label = "play_button_content"
     )
     val shape = RoundedCornerShape(percent = 50)
@@ -320,26 +319,25 @@ private fun PlayStopButton(
             targetState = isPlaying,
             transitionSpec = {
                 (scaleIn(
-                    animationSpec = tween(150),
+                    animationSpec = TalkifyMotion.spatialFast,
                     initialScale = 0.8f
-                ) + fadeIn(animationSpec = tween(150))).togetherWith(
+                ) + fadeIn(animationSpec = TalkifyMotion.effectsDefaultOf())).togetherWith(
                     scaleOut(
-                        animationSpec = tween(150),
+                        animationSpec = TalkifyMotion.spatialFast,
                         targetScale = 0.8f
-                    ) + fadeOut(animationSpec = tween(150))
+                    ) + fadeOut(animationSpec = TalkifyMotion.effectsDefaultOf())
                 )
             },
             label = "play_button_state"
         ) { playing ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (playing) {
-                    EqualizerBars(
-                        barCount = 3,
+                    VoiceWaveBars(
+                        amplitudes = waveform,
                         color = contentColor,
-                        barWidth = 4.dp,
-                        barGap = 2.dp,
-                        minHeight = 10.dp,
-                        maxHeight = 22.dp
+                        modifier = Modifier
+                            .width(76.dp)
+                            .height(20.dp)
                     )
                 } else {
                     Icon(

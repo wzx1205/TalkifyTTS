@@ -8,10 +8,14 @@ import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.Environment
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -69,9 +73,14 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import com.github.lonepheasantwarrior.talkify.R
 import com.github.lonepheasantwarrior.talkify.domain.model.UpdateCheckResult
+import com.github.lonepheasantwarrior.talkify.infrastructure.app.telemetry.AppActionTracker
+import com.github.lonepheasantwarrior.talkify.infrastructure.app.telemetry.AppPageTracker
 import com.github.lonepheasantwarrior.talkify.infrastructure.app.update.UpdateChecker
 import com.github.lonepheasantwarrior.talkify.ui.components.UpdateDialog
 import com.github.lonepheasantwarrior.talkify.ui.components.rememberTelemetryScrollObserver
+import com.github.lonepheasantwarrior.talkify.ui.theme.SharedKeyBrandMark
+import com.github.lonepheasantwarrior.talkify.ui.theme.SharedKeyBrandTitle
+import com.github.lonepheasantwarrior.talkify.ui.theme.sharedBrandBounds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -81,11 +90,13 @@ enum class DonateChannel {
     ALIPAY
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalSharedTransitionApi::class)
 @Composable
 fun AboutScreen(
     onBackClick: () -> Unit,
-    versionName: String
+    versionName: String,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -104,33 +115,38 @@ fun AboutScreen(
 
     val sheetState = rememberModalBottomSheetState()
 
-    rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val allGranted = permissions.values.all { it }
-        if (allGranted && pendingDonateChannel != null) {
-            scope.launch {
-                val success = saveQrCodeToGallery(context, pendingDonateChannel!!)
-                if (success) {
-                    showDonateInstruction = pendingDonateChannel
-                } else {
-                    Toast.makeText(context, R.string.donate_save_failed, Toast.LENGTH_SHORT).show()
-                }
-                pendingDonateChannel = null
-            }
-        } else {
-            pendingDonateChannel = null
-        }
+    fun donateChannelKey(channel: DonateChannel): String = when (channel) {
+        DonateChannel.WECHAT -> AppActionTracker.CHANNEL_WECHAT
+        DonateChannel.ALIPAY -> AppActionTracker.CHANNEL_ALIPAY
     }
 
-    fun requestSaveQrCode(channel: DonateChannel) {
+    fun saveAndReportQr(channel: DonateChannel) {
         scope.launch {
             val success = saveQrCodeToGallery(context, channel)
+            AppActionTracker.donateQrSaved(donateChannelKey(channel), success, AppActionTracker.URL_ABOUT)
             if (success) {
                 showDonateInstruction = channel
             } else {
                 Toast.makeText(context, R.string.donate_save_failed, Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    fun requestSaveQrCode(channel: DonateChannel) {
+        AppActionTracker.donateChannelClick(donateChannelKey(channel), AppActionTracker.URL_ABOUT)
+        saveAndReportQr(channel)
+    }
+
+    rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.values.all { it }
+        if (allGranted && pendingDonateChannel != null) {
+            val channel = pendingDonateChannel!!
+            pendingDonateChannel = null
+            saveAndReportQr(channel)
+        } else {
+            pendingDonateChannel = null
         }
     }
 
@@ -183,6 +199,11 @@ fun AboutScreen(
                 modifier = Modifier
                     .size(88.dp)
                     .clip(MaterialTheme.shapes.large)
+                    .sharedBrandBounds(
+                        SharedKeyBrandMark,
+                        sharedTransitionScope,
+                        animatedVisibilityScope
+                    )
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -190,7 +211,12 @@ fun AboutScreen(
             Text(
                 text = stringResource(R.string.app_name),
                 style = MaterialTheme.typography.headlineMedium,
-                color = MaterialTheme.colorScheme.onSurface
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.sharedBrandBounds(
+                    SharedKeyBrandTitle,
+                    sharedTransitionScope,
+                    animatedVisibilityScope
+                )
             )
 
             Surface(
@@ -232,8 +258,17 @@ fun AboutScreen(
                 onClick = {
                     isCheckingUpdate = true
                     scope.launch {
+                        val startedAt = SystemClock.elapsedRealtime()
                         val result = withContext(Dispatchers.IO) {
                             updateChecker.checkForUpdates(versionName)
+                        }
+                        AppActionTracker.updateCheck(
+                            AppActionTracker.TRIGGER_MANUAL,
+                            result,
+                            (SystemClock.elapsedRealtime() - startedAt).toInt()
+                        )
+                        if (result is UpdateCheckResult.UpdateAvailable) {
+                            AppPageTracker.open(AppPageTracker.PATH_UPDATE, "Update")
                         }
                         isCheckingUpdate = false
                         showUpdateResult = result
@@ -258,6 +293,7 @@ fun AboutScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable {
+                        AppActionTracker.externalLinkOpen(AppActionTracker.TARGET_GITHUB, AppActionTracker.URL_ABOUT)
                         uriHandler.openUri(githubUrl)
                     },
                 colors = CardDefaults.cardColors(
@@ -339,6 +375,7 @@ fun AboutScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable {
+                        AppActionTracker.qqGroupCopied(AppActionTracker.URL_ABOUT)
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         val clip = ClipData.newPlainText("QQ群号", qqGroupNumber)
                         clipboard.setPrimaryClip(clip)
@@ -386,7 +423,10 @@ fun AboutScreen(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { showPrivacyDialog = true },
+                    .clickable {
+                        AppPageTracker.open(AppPageTracker.PATH_PRIVACY, "Privacy")
+                        showPrivacyDialog = true
+                    },
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
                 ),
@@ -439,7 +479,10 @@ fun AboutScreen(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     FilledTonalButton(
-                        onClick = { showDonateSheet = true },
+                        onClick = {
+                            AppPageTracker.open(AppPageTracker.PATH_DONATE, "Donate")
+                            showDonateSheet = true
+                        },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(
@@ -544,7 +587,8 @@ fun AboutScreen(
                 UpdateDialog(
                     updateInfo = result.updateInfo,
                     onDismiss = { showUpdateResult = null },
-                    onRemindLater = { showUpdateResult = null }
+                    onRemindLater = { showUpdateResult = null },
+                    source = AppActionTracker.TRIGGER_MANUAL
                 )
             }
             is UpdateCheckResult.NoUpdateAvailable -> {
