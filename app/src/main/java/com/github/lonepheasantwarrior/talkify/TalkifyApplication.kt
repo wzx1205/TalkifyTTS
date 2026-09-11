@@ -2,6 +2,7 @@ package com.github.lonepheasantwarrior.talkify
 
 import android.app.Activity
 import android.app.Application
+import android.content.ComponentCallbacks2
 import android.os.Bundle
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
@@ -13,6 +14,7 @@ import com.github.lonepheasantwarrior.talkify.infrastructure.app.telemetry.Devic
 import com.github.lonepheasantwarrior.talkify.infrastructure.app.telemetry.TalkifyTelemetry
 import com.github.lonepheasantwarrior.talkify.infrastructure.app.telemetry.recorder.UmamiRecorder
 import com.github.lonepheasantwarrior.talkify.llm.LlmBookConfig
+import com.github.lonepheasantwarrior.talkify.llm.LlmEngine
 import com.github.lonepheasantwarrior.talkify.service.TtsLogger
 
 class TalkifyApplication : Application() {
@@ -32,6 +34,23 @@ class TalkifyApplication : Application() {
         deleteLegacyTelemetryPrefs()
         observeAppForeground()
         trackCurrentActivity()
+    }
+
+    /**
+     * 系统内存压力回调：立即释放端上 LLM 会话（权重 + KV 约 700MB）
+     *
+     * TRIM_MEMORY_UI_HIDDEN 只是界面不可见——听书恰恰在后台进行，
+     * 此时释放会让下一段无谓地重新加载模型，故排除；
+     * 其余 RUNNING_LOW 及以上（含后台/临界档）都值得释放，
+     * 下次需要时 [com.github.lonepheasantwarrior.talkify.llm.LlmEngine] 会自动重建
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW &&
+            level != ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN
+        ) {
+            LlmEngine.releaseOnMemoryPressure()
+        }
     }
 
     /**

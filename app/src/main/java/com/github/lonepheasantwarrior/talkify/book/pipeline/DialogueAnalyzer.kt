@@ -38,7 +38,15 @@ object DialogueAnalyzer {
     /** 说话人 → 性别投票 [female, male]（窗口线索会被旁白里的第三者描述污染，累计多数派更稳） */
     private val genderVotes = HashMap<String, IntArray>()
 
-    fun analyze(text: String): List<Utterance> {
+    fun analyze(text: String): List<Utterance> = enhanceWithLlm(analyzeRules(text))
+
+    /**
+     * 规则层分析（不含 LLM）：切句 + 轮替猜测 + 性别投票回填
+     *
+     * 独立暴露给流水线：旁白句与 LLM 无关，可先用规则结果立刻合成，
+     * LLM 校正（只影响对白句）并行进行，首包不再等推理。
+     */
+    fun analyzeRules(text: String): List<Utterance> {
         if (text.isBlank()) return emptyList()
         val last = carryLast
         val prev = carryPrev
@@ -50,15 +58,15 @@ object DialogueAnalyzer {
         updateSession(utterances)
 
         // 性别按累计多数派回填：早期被旁白描述污染的单次误判会被后续票数纠正
-        val voted = applyGenderMajority(utterances)
-
-        return enhanceWithLlm(voted)
+        return applyGenderMajority(utterances)
     }
 
     /**
-     * 可选 LLM 增强；任何异常都吞掉并返回原结果
+     * 可选 LLM 增强；任何异常都吞掉并返回原结果。
+     * 只改对白句（说话人/性别/情绪），旁白句与文本切分原样保留——
+     * 因此可以先播旁白、待本函数返回后再播校正过的对白。
      */
-    private fun enhanceWithLlm(utterances: List<Utterance>): List<Utterance> {
+    fun enhanceWithLlm(utterances: List<Utterance>): List<Utterance> {
         if (!LlmBookConfig.isEnabled()) return utterances
         val context = TalkifyAppHolder.getContext() ?: return utterances
         return try {

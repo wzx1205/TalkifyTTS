@@ -10,6 +10,7 @@ import android.speech.tts.Voice
 import com.github.lonepheasantwarrior.talkify.R
 import com.github.lonepheasantwarrior.talkify.domain.model.BaseProviderConfig
 import com.github.lonepheasantwarrior.talkify.domain.model.LocalModelConfig
+import com.github.lonepheasantwarrior.talkify.domain.model.ProviderIds
 import com.github.lonepheasantwarrior.talkify.domain.model.TtsProviderRegistry
 import com.github.lonepheasantwarrior.talkify.domain.repository.AppConfigRepository
 import com.github.lonepheasantwarrior.talkify.domain.repository.ProviderConfigRepository
@@ -560,9 +561,8 @@ class TalkifyTtsService : TextToSpeechService() {
             return@runBlocking
         }
 
-        // 2. 获取双重锁：WakeLock (CPU) + WifiLock (网络)
+        // 2. 获取 WakeLock：本地推理也要 CPU 不休眠
         acquireWakeLock()
-        acquireWifiLock()
 
         // 提升前台优先级，防止被系统查杀
         startForegroundService()
@@ -607,6 +607,12 @@ class TalkifyTtsService : TextToSpeechService() {
                     getString(R.string.tts_error_provider_not_ready)
                 )
                 return@runBlocking
+            }
+
+            // 3. WifiLock 只为联网合成持有：本地引擎全程离线，
+            //    持锁会把 Wi-Fi 钉在低延迟高耗电模式，纯增加发热与耗电
+            if (providerId != ProviderIds.LocalModel.providerId) {
+                acquireWifiLock()
             }
 
             val config = getProviderConfigRepository(providerId)?.getConfig(providerId)

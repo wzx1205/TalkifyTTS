@@ -99,4 +99,42 @@ class LlmAnalysisOnDeviceTest {
         // 增强后应出现具体人名，而不是"未知"
         Log.i(tag, "speakers=" + quotes.map { it.speaker })
     }
+
+    /**
+     * KV 前缀复用回归：同一会话连续两次生成（提示词共享 system 段），
+     * 第二次必须命中前缀缓存（logcat: `kv prefix reuse: N/M tokens`, N>0），
+     * 且输出不受缓存影响、仍可解析。
+     *
+     * 注意放在独立测试里：类内其它测试的 @After 会 release 会话，跨方法不共享 KV。
+     */
+    @Test
+    fun kvPrefixReuseKeepsOutputCorrect() {
+        requireModel()
+        val quotesA = listOf(
+            Utterance(text = "裴钱咬了咬牙，低声道：", isQuote = false),
+            Utterance(text = "师父，我饿了。", isQuote = true, speaker = "裴钱"),
+            Utterance(text = "陈平安笑道：", isQuote = false),
+            Utterance(text = "前面就是小镇，忍一忍。", isQuote = true, speaker = "陈平安")
+        )
+        // 只换第二句对白正文：system 段与前一条 prompt 完全一致，分叉点在尾部
+        val quotesB = listOf(
+            quotesA[0],
+            quotesA[1],
+            quotesA[2],
+            Utterance(text = "天黑前赶不到镇上了。", isQuote = true, speaker = "陈平安")
+        )
+        val raw1 = LlmEngine.generate(context, LlmBookExtractor.buildPrompt(quotesA))
+        assertTrue("first generate returned nothing", !raw1.isNullOrBlank())
+
+        val t0 = System.currentTimeMillis()
+        val raw2 = LlmEngine.generate(context, LlmBookExtractor.buildPrompt(quotesB))
+        val elapsed = System.currentTimeMillis() - t0
+        Log.i(tag, "KV-REUSE second generate = ${elapsed}ms")
+        assertTrue("second generate returned nothing", !raw2.isNullOrBlank())
+        // 复用前缀不能影响输出可解析性（KV 错乱会直接产出乱码/空串）
+        assertTrue(
+            "output broken after prefix reuse",
+            LlmBookExtractor.parse(raw2!!).isNotEmpty()
+        )
+    }
 }

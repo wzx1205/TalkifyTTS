@@ -21,6 +21,7 @@ import com.github.lonepheasantwarrior.talkify.infrastructure.provider.local.Loca
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.local.LocalVoiceCatalog
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.local.SherpaTtsEngine
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.local.WavSampleReader
+import com.github.lonepheasantwarrior.talkify.llm.LlmBookConfig
 import com.github.lonepheasantwarrior.talkify.service.TtsErrorCode
 import com.github.lonepheasantwarrior.talkify.service.TtsLogger
 import com.github.lonepheasantwarrior.talkify.service.provider.AbstractTtsProvider
@@ -28,10 +29,13 @@ import com.github.lonepheasantwarrior.talkify.service.provider.AudioConfig
 import com.github.lonepheasantwarrior.talkify.service.provider.SynthesisParams
 import com.github.lonepheasantwarrior.talkify.service.provider.TtsSynthesisListener
 import com.github.lonepheasantwarrior.talkify.service.provider.VOICE_NAME_SEPARATOR
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -346,8 +350,12 @@ class LocalModelProvider : AbstractTtsProvider() {
      * 多角色听书：对白分析 → 按句换参考音色 → 逐段流式合成
      *
      * 仅在 [BookTtsSettings.isEnabled] 时走此路径；分析失败回退整段单音色。
+     *
+     * 流水线：LLM 校正只影响对白句，旁白句与它无关——规则分析完成后，
+     * 开头的连续旁白立刻合成，LLM 校正并行进行，对白等校正结果再播。
+     * 冷启动时 LLM 加载+推理的 5-7 秒被旁白播放时长吸收，首包不再干等。
      */
-    private fun synthesizeBookMultiRole(
+    private suspend fun synthesizeBookMultiRole(
         engine: SherpaTtsEngine,
         text: String,
         modelInfo: LocalModelInfo,
@@ -359,7 +367,7 @@ class LocalModelProvider : AbstractTtsProvider() {
         // 不在此处 resetSession：说话人→槽位映射需跨段落保持，
         // 否则同一角色每段被重新分配音色，多角色听书失效
         val utterances = try {
-            DialogueAnalyzer.analyze(text)
+            DialogueAnalyzer.analyzeRules(text)
         } catch (e: Exception) {
             logWarning("Dialogue analysis failed, fallback to single voice: ${e.message}")
             emptyList()
@@ -386,52 +394,103 @@ class LocalModelProvider : AbstractTtsProvider() {
 
         logInfo("Book multi-role: ${utterances.size} utterances")
         val localVoiceIds = voicesFor(modelInfo).map { it.voiceId }.toSet()
-        for (u in utterances) {
-            if (isCancelled) return
-            val plan = RoleVoiceRouter.resolve(u, fallbackVoiceId)
-            // 旁白：角色册的旁白绑定（若属于本模型音色表）优先于全局角色设置
-            val isNarration = !u.isQuote || u.speaker == Utterance.SPEAKER_NARRATOR
-            val narratorBinding = if (isNarration) {
-                CharacterBookStore.activeNarratorVoice()?.takeIf { it in localVoiceIds }
+
+        // LLM 校正并行跑：传完整列表，保证提示词条数/序号与规则结果一致
+        // （enhance 只校正对白句，旁白句原样返回，先播的部分不受影响）
+        val leading = utterances.takeWhile { !it.isQuote }
+        val rest = utterances.drop(leading.size)
+        coroutineScope {
+            val llmDeferred = if (rest.isNotEmpty() && LlmBookConfig.isEnabled()) {
+                async { DialogueAnalyzer.enhanceWithLlm(utterances) }
             } else null
-            val requestedVoice = when {
-                isNarration && narratorBinding != null -> narratorBinding
-                !isNarration -> CharacterBookStore.activeVoiceFor(u.speaker)
-                    ?.takeIf { it in localVoiceIds } ?: (plan.voiceId ?: fallbackVoiceId)
-                else -> plan.voiceId ?: fallbackVoiceId
+
+            for (u in leading) {
+                if (isCancelled) return@coroutineScope
+                if (!synthesizeUtterance(
+                        engine, u, modelInfo, modelDir, fallbackVoiceId, baseSpeed, localVoiceIds, listener
+                    )
+                ) return@coroutineScope
             }
-            // 相邻对白防撞：不同角色连续对话时在同性别音色池内轮转（池随当前模型变化）
-            var utteranceVoice = requestedVoice
-            if (RoleVoiceRouter.collidesWithPrevious(u.speaker, utteranceVoice)) {
-                val (femalePool, malePool) =
-                    com.github.lonepheasantwarrior.talkify.book.store.VoiceAutoAssign.poolsForLocalModel(modelInfo)
-                val pool = if (utteranceVoice in femalePool) femalePool else malePool
-                val idx = pool.indexOf(utteranceVoice)
-                if (idx >= 0) utteranceVoice = pool[(idx + 1) % pool.size]
-            }
-            RoleVoiceRouter.registerSpoken(u.speaker, utteranceVoice)
-            val voice = resolveVoice(utteranceVoice, modelInfo)
-            val reference = referenceFor(modelInfo, modelDir, voice)
-            val speed = (baseSpeed * plan.speedMultiplier).coerceIn(0.5f, 2.0f)
-            logInfo(
-                "Utterance speaker=${u.speaker} quote=${u.isQuote} emotion=${u.emotion} " +
-                    "voice=${voice.voiceId} speed=$speed text=${u.text.take(24)}"
-            )
-            val completed = engine.synthesizeStream(
-                text = u.text,
-                referenceAudio = reference.samples,
-                referenceSampleRate = reference.sampleRate,
-                referenceText = voice.referenceText,
-                speed = speed,
-                speakerId = voice.speakerId
-            ) { pcm, sr ->
-                if (!isCancelled) {
-                    listener.onAudioAvailable(pcm, sr, AudioFormat.ENCODING_PCM_16BIT, 1)
+
+            val finalUtterances = llmDeferred?.let { deferred ->
+                try {
+                    deferred.await()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logWarning("LLM pipeline failed, using rule result: ${e.message}")
+                    utterances
                 }
-                !isCancelled
+            } ?: utterances
+
+            for (u in finalUtterances.drop(leading.size)) {
+                if (isCancelled) return@coroutineScope
+                if (!synthesizeUtterance(
+                        engine, u, modelInfo, modelDir, fallbackVoiceId, baseSpeed, localVoiceIds, listener
+                    )
+                ) return@coroutineScope
             }
-            if (!completed || isCancelled) return
         }
+    }
+
+    /**
+     * 合成单句：路由音色 → 旁白绑定 → 防撞轮转 → 流式合成
+     *
+     * @return false 表示用户取消或合成中断，调用方应停止后续句子
+     */
+    private fun synthesizeUtterance(
+        engine: SherpaTtsEngine,
+        u: Utterance,
+        modelInfo: LocalModelInfo,
+        modelDir: File,
+        fallbackVoiceId: String,
+        baseSpeed: Float,
+        localVoiceIds: Set<String>,
+        listener: TtsSynthesisListener
+    ): Boolean {
+        val plan = RoleVoiceRouter.resolve(u, fallbackVoiceId)
+        // 旁白：角色册的旁白绑定（若属于本模型音色表）优先于全局角色设置
+        val isNarration = !u.isQuote || u.speaker == Utterance.SPEAKER_NARRATOR
+        val narratorBinding = if (isNarration) {
+            CharacterBookStore.activeNarratorVoice()?.takeIf { it in localVoiceIds }
+        } else null
+        val requestedVoice = when {
+            isNarration && narratorBinding != null -> narratorBinding
+            !isNarration -> CharacterBookStore.activeVoiceFor(u.speaker)
+                ?.takeIf { it in localVoiceIds } ?: (plan.voiceId ?: fallbackVoiceId)
+            else -> plan.voiceId ?: fallbackVoiceId
+        }
+        // 相邻对白防撞：不同角色连续对话时在同性别音色池内轮转（池随当前模型变化）
+        var utteranceVoice = requestedVoice
+        if (RoleVoiceRouter.collidesWithPrevious(u.speaker, utteranceVoice)) {
+            val (femalePool, malePool) =
+                com.github.lonepheasantwarrior.talkify.book.store.VoiceAutoAssign.poolsForLocalModel(modelInfo)
+            val pool = if (utteranceVoice in femalePool) femalePool else malePool
+            val idx = pool.indexOf(utteranceVoice)
+            if (idx >= 0) utteranceVoice = pool[(idx + 1) % pool.size]
+        }
+        RoleVoiceRouter.registerSpoken(u.speaker, utteranceVoice)
+        val voice = resolveVoice(utteranceVoice, modelInfo)
+        val reference = referenceFor(modelInfo, modelDir, voice)
+        val speed = (baseSpeed * plan.speedMultiplier).coerceIn(0.5f, 2.0f)
+        logInfo(
+            "Utterance speaker=${u.speaker} quote=${u.isQuote} emotion=${u.emotion} " +
+                "voice=${voice.voiceId} speed=$speed text=${u.text.take(24)}"
+        )
+        val completed = engine.synthesizeStream(
+            text = u.text,
+            referenceAudio = reference.samples,
+            referenceSampleRate = reference.sampleRate,
+            referenceText = voice.referenceText,
+            speed = speed,
+            speakerId = voice.speakerId
+        ) { pcm, sr ->
+            if (!isCancelled) {
+                listener.onAudioAvailable(pcm, sr, AudioFormat.ENCODING_PCM_16BIT, 1)
+            }
+            !isCancelled
+        }
+        return completed && !isCancelled
     }
 
     /**

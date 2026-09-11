@@ -31,6 +31,12 @@ struct LlmSession {
     const llama_vocab * vocab = nullptr;
     int             n_threads = 4;
     std::mutex      lock;      // 串行化同一 handle 的推理
+
+    // ---- KV 前缀复用状态 ----
+    // 听书每段都携带同一段 system 提示词（~200 token）。记住上次成功 decode
+    // 的完整 prompt，下次只对分叉之后的部分做 prefill，省掉重复的系统段计算
+    std::vector<llama_token> prev_prompt;
+    bool kv_valid = false;     // KV 中是否保存着与 prev_prompt 对应的完整前缀
 };
 
 // 判断 [s, s+n) 是否以完整 UTF-8 序列结尾；返回"可安全输出的字节数"。
@@ -62,9 +68,9 @@ void log_callback(ggml_log_level level, const char * text, void * /*user*/) {
     }
 }
 
-// 把 prompt 按 n_batch 上限分块喂进 KV cache
-bool decode_prompt(llama_context * ctx, const std::vector<llama_token> & tokens, int n_batch) {
-    for (size_t i = 0; i < tokens.size(); i += n_batch) {
+// 把 prompt 按 n_batch 上限分块喂进 KV cache；begin 之前的 token 假定已在 KV 中
+bool decode_prompt(llama_context * ctx, const std::vector<llama_token> & tokens, int n_batch, size_t begin) {
+    for (size_t i = begin; i < tokens.size(); i += n_batch) {
         int32_t n = static_cast<int32_t>(std::min<size_t>(n_batch, tokens.size() - i));
         llama_batch batch = llama_batch_get_one(const_cast<llama_token *>(tokens.data()) + i, n);
         if (llama_decode(ctx, batch) != 0) {
@@ -165,10 +171,31 @@ Java_com_github_lonepheasantwarrior_talkify_llm_LlamaBridge_nativeGenerate(
         LOGI("prompt truncated to %d tokens (n_ctx=%d)", keep, n_ctx);
     }
 
-    llama_memory_clear(llama_get_memory(session->ctx), true);
-    if (!decode_prompt(session->ctx, tokens, 256)) {
+    // ---- KV 前缀复用：与上一次 prompt 求最长公共前缀，只 decode 分叉部分 ----
+    // llama_batch_get_one 不带显式 pos 时位置沿 KV 现有占用顺延，
+    // 因此保留前缀后接着喂新 token 即可无缝续上
+    llama_memory_t mem = llama_get_memory(session->ctx);
+    size_t common = 0;
+    if (session->kv_valid) {
+        size_t limit = std::min(session->prev_prompt.size(), tokens.size());
+        while (common < limit && session->prev_prompt[common] == tokens[common]) ++common;
+    }
+    if (common > 0) {
+        // 丢弃公共前缀之后的所有 KV（含上一轮生成的 token），前缀原样保留
+        llama_memory_seq_rm(mem, 0, static_cast<llama_pos>(common), -1);
+    } else {
+        llama_memory_clear(mem, true);
+    }
+    LOGI("kv prefix reuse: %zu/%zu tokens", common, tokens.size());
+
+    if (!decode_prompt(session->ctx, tokens, 256, common)) {
+        // decode 中断的 KV 内容不完整，作废复用状态，下次全量重算
+        llama_memory_clear(mem, true);
+        session->kv_valid = false;
         return env->NewStringUTF("");
     }
+    session->prev_prompt = tokens;
+    session->kv_valid = true;
 
     // ---- sampler ----
     llama_sampler_chain_params sparams = llama_sampler_chain_default_params();
