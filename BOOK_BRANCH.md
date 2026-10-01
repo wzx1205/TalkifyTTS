@@ -46,7 +46,7 @@ java -Dfile.encoding=UTF-8 -jar smoke.jar
 ## 后续（未做）
 
 - B2 角色绑定 UI（改槽位音色）
-- B3 可选 Qwen3.5-0.8B GGUF 更准对白分析
+- B3 可选 Qwen3.5-0.8B GGUF 更准对白分析（已切换为默认分析模型，魔搭优先下载）
 - B4 情感曲线细化 / CosyVoice3 第二引擎
 - 提示语未抽出人名时的说话人消解（如「他皱眉道」会回落上一说话人）
 

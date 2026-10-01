@@ -14,7 +14,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * 端上 LLM 引擎（单例）
  *
  * 持有唯一的 [LlamaBridge.Session]。理由与本地 TTS 引擎一致：
- * 模型常驻约 700MB（权重 + KV），多方各持一份会内存翻倍并争抢 CPU。
+ * Qwen3.5-0.8B Q4 权重约 553MB，加载后 PSS 常在 900MB~1.1GB（权重 + KV），
+ * 多方各持一份会内存翻倍并争抢 CPU。
  *
  * 内存生命周期：空闲 [IDLE_TIMEOUT_MS] 后自动释放会话归还内存
  * （与 LocalModelProvider 的引擎空闲释放同一模式），下次听书再加载；

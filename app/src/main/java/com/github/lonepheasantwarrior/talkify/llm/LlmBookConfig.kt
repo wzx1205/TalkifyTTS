@@ -10,7 +10,7 @@ import androidx.core.content.edit
  * 独立于 TTS 供应商配置：LLM 只负责"把规则引擎切好的句子，逐句判定
  * 说话人/性别/情绪"，其选择（开关、模型、线程）不应随供应商切换而丢失。
  *
- * 默认关闭。原因：模型约 460MB 需用户显式下载，且小模型判定偶有抖动，
+ * 默认关闭。原因：模型约 550MB 需用户显式下载，且小模型判定偶有抖动，
  * 不开时走纯规则引擎（既有行为完全不变）。
  */
 object LlmBookConfig {
@@ -21,8 +21,11 @@ object LlmBookConfig {
     private const val KEY_THREADS = "threads"
     private const val KEY_LLM_TIMEOUT_MS = "timeout_ms"
 
-    /** 默认模型：Qwen3-0.6B Q4_K_M，真机实测 33 tok/s、PSS 增量约 730MB */
-    const val DEFAULT_MODEL_ID = "qwen3_0_6b"
+    /** 默认模型：Qwen3.5-0.8B Q4_K_M（指令跟随/中文对白抽取优于 0.6B），文件约 553MB */
+    const val DEFAULT_MODEL_ID = "qwen3_5_0_8b"
+
+    /** 旧默认（Qwen3-0.6B）：已下载用户可继续用，新装默认不再指向它 */
+    const val LEGACY_MODEL_ID = "qwen3_0_6b"
 
     /** 默认线程数：实测 4 线程最优（6 线程在小核调度下反而更慢） */
     const val DEFAULT_THREADS = 4
@@ -32,10 +35,10 @@ object LlmBookConfig {
      *
      * 超时即回退规则结果。听书不该因为分析慢而卡住。
      * 取值需覆盖「首次调用时的模型加载 + prompt 预填 + 生成」全过程：
-     * 实测模拟器（4 核）整段约需 5~8 秒，真机（8 Elite）约 2~3 秒，
-     * 因此给到 12 秒以免在慢设备上被截断成无法解析的半截 JSON。
+     * 0.6B 真机约 2~3 秒；0.8B 参数更多，慢设备上再放宽一点，
+     * 给到 15 秒以免截断成无法解析的半截 JSON。
      */
-    const val DEFAULT_TIMEOUT_MS = 12000L
+    const val DEFAULT_TIMEOUT_MS = 15000L
 
     @Volatile
     private var prefs: SharedPreferences? = null

@@ -22,7 +22,8 @@ import org.junit.runner.RunWith
  *  2. 走完整 DialogueAnalyzer 后，说话人/语气确被校正（效果验证）
  *  3. 无论 LLM 是否生效，**拼接回来的文本必须与规则结果逐字一致**（安全验证）
  *
- * 需先推模型到 files/models/llm/qwen3_0_6b.gguf，否则 Assume 跳过。
+ * 需先推模型到 files/models/llm/qwen3_5_0_8b.gguf（或旧版 qwen3_0_6b.gguf），
+ * 否则 Assume 跳过。
  */
 @RunWith(AndroidJUnit4::class)
 class LlmAnalysisOnDeviceTest {

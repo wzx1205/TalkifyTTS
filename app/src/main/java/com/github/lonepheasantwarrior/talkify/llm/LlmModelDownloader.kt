@@ -19,22 +19,30 @@ object LlmModelDownloader {
 
     private const val TAG = "LlmModelDownloader"
 
-    /** 国内镜像优先，失败回退 HF 原始源（与 TTS 模型下载策略一致） */
-    private const val MIRROR = "https://hf-mirror.com"
-    private const val ORIGIN = "https://huggingface.co"
+    /** 魔搭（ModelScope）国内直下优先，失败再走 HF 镜像/源站 */
+    private const val MODELSCOPE = "https://www.modelscope.cn"
+    private const val HF_MIRROR = "https://hf-mirror.com"
+    private const val HF_ORIGIN = "https://huggingface.co"
 
     /**
-     * 模型源路径（仓库相对路径）
+     * 社区量化 bartowski/Qwen_Qwen3.5-0.8B-GGUF 的 Q4_K_M。
      *
-     * 使用社区量化 bartowski/Qwen_Qwen3-0.6B-GGUF：官方仓库只发布 Q8_0，
-     * Q4_K_M（约 460MB）在真机实测 33 tok/s、PSS 增量约 730MB，是精度/体积/速度的平衡点。
+     * 与 0.6B 相比指令跟随/中文对白抽取更稳；魔搭已同步同名仓库，
+     * 国内优先走魔搭 resolve 链，HF 仅作回退。
      */
-    private const val REPO_PATH = "bartowski/Qwen_Qwen3-0.6B-GGUF/resolve/main/Qwen_Qwen3-0.6B-Q4_K_M.gguf"
+    private const val MODELSCOPE_REPO = "bartowski/Qwen_Qwen3.5-0.8B-GGUF"
+    private const val MODEL_FILE = "Qwen_Qwen3.5-0.8B-Q4_K_M.gguf"
+    private const val HF_REPO_PATH = "bartowski/Qwen_Qwen3.5-0.8B-GGUF/resolve/main/$MODEL_FILE"
 
-    /** 约 462MB */
-    const val EXPECTED_SIZE_BYTES = 484_220_320L
+    /** 579_615_840 ≈ 553MB（魔搭/HF 实测 LFS 体积） */
+    const val EXPECTED_SIZE_BYTES = 579_615_840L
 
-    val candidateUrls: List<String> = listOf("$MIRROR/$REPO_PATH", "$ORIGIN/$REPO_PATH")
+    val candidateUrls: List<String> = listOf(
+        "$MODELSCOPE/models/$MODELSCOPE_REPO/resolve/master/$MODEL_FILE",
+        "$MODELSCOPE/api/v1/models/$MODELSCOPE_REPO/repo?Revision=master&FilePath=$MODEL_FILE",
+        "$HF_MIRROR/$HF_REPO_PATH",
+        "$HF_ORIGIN/$HF_REPO_PATH"
+    )
 
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()

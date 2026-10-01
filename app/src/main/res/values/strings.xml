@@ -184,8 +184,8 @@
     <string name="book_characters_empty_hint">导入一本 EPUB，自动扫描全书角色并分配声音。\n开启「多角色听书」后朗读时即按角色切换声线。</string>
     <string name="book_characters_auto_assign">按对白量自动分配声音</string>
     <string name="llm_analysis_title">AI 角色分析（本地模型）</string>
-    <string name="llm_analysis_desc">用手机本地小模型逐句判断说话人、性别与语气，比关键词更准。\n模型约 460MB，仅需下载一次；分析失败会自动回退规则结果，不影响朗读。</string>
-    <string name="llm_analysis_download">下载分析模型（约 460MB）</string>
+    <string name="llm_analysis_desc">用手机本地 Qwen3.5-0.8B 逐句判断说话人、性别与语气，比关键词更准。\n模型约 553MB（魔搭下载），仅需一次；分析失败会自动回退规则结果，不影响朗读。</string>
+    <string name="llm_analysis_download">下载分析模型（约 553MB）</string>
     <string name="llm_analysis_ready">模型已就绪，朗读时将自动校正角色与语气</string>
     <string name="book_characters_delete">删除</string>
     <string name="book_characters_dialogue_format">%1$d 句对白</string>
