@@ -65,17 +65,32 @@ object RuleEngine {
     private val fearHints = listOf("颤", "抖", "惊", "恐", "骇", "哆嗦", "尖叫")
     private val surpriseHints = listOf("惊", "讶", "愕", "咦", "啊", "竟")
 
+    /** 情感加强词：出现则抬高强度（网文常见「狠狠」「猛地」「死死」） */
+    private val intensifiers = listOf(
+        "非常", "格外", "特别", "极其", "无比", "简直", "狠狠", "死死", "猛地",
+        "骤然", "顿时", "忽然", "一下子", "几乎", "彻底", "疯狂", "拼命"
+    )
+
+    /** 裸代词说话人（他/她/众人…），需回填到最近具名角色 */
+    private val pronounSpeakers = setOf("他", "她", "它", "两人", "众人")
+
     /**
      * @param carryLast 上一段最后一句对白的说话人（跨段对话轮替用）
      * @param carryPrev 上上一句对白的说话人
      * @param prevEndedWithQuote 上一段是否以对白结尾（是→本段开头的无提示对白按轮替处理；
      *                           否→中间隔了旁白，同角继续说的概率更高，延续上一说话人）
      */
+    /**
+     * @param carryLastNamedMale 跨段最近具名男角色（「他皱眉道」回填用）
+     * @param carryLastNamedFemale 跨段最近具名女角色（「她叹道」回填用）
+     */
     fun analyze(
         text: String,
         carryLast: String? = null,
         carryPrev: String? = null,
-        prevEndedWithQuote: Boolean = false
+        prevEndedWithQuote: Boolean = false,
+        carryLastNamedMale: String? = null,
+        carryLastNamedFemale: String? = null
     ): List<Utterance> {
         val normalized = normalize(text)
         if (normalized.isBlank()) return emptyList()
@@ -91,6 +106,9 @@ object RuleEngine {
         var lastGender = Gender.UNKNOWN
         // 本段内最近两句对白的说话人，用于无提示对白的轮替猜测
         var prevSpeaker: String? = null
+        var lastNamedMale = carryLastNamedMale
+        var lastNamedFemale = carryLastNamedFemale
+        var lastNamedAny = carryLastNamedMale ?: carryLastNamedFemale
 
         for (span in quotes) {
             if (span.start > cursor) {
@@ -118,9 +136,11 @@ object RuleEngine {
                 val beforeQuote = beforeQuoteWindow(normalized, span)
                 val afterEnd = (span.end + 40).coerceAtMost(normalized.length)
                 val emotionWindow = beforeQuote + inner + normalized.substring(span.end, afterEnd)
-                val attributed = resolveSpeaker(attributionWindow)
-                val speaker = attributed ?: guessAlternatingSpeaker(
-                    lastSpeaker, prevSpeaker, carryLast, carryPrev, prevEndedWithQuote
+                val (rawSpeaker, hasVerb) = resolveSpeaker(attributionWindow)
+                val speaker = resolveEffectiveSpeaker(
+                    rawSpeaker, hasVerb, lastSpeaker, prevSpeaker,
+                    carryLast, carryPrev, prevEndedWithQuote,
+                    lastNamedMale, lastNamedFemale, lastNamedAny
                 )
                 var gender = resolveGender(attributionWindow, speaker, lastGender)
                 // 名字未抽出时，用紧邻提示语的他/她纠正性别（他皱眉道 / 她叹道）
@@ -146,6 +166,15 @@ object RuleEngine {
                     prevSpeaker = lastSpeaker
                     lastSpeaker = speaker
                     lastGender = gender
+                    // 记住具名角色，供后续「他/她 + 动作 + 道」回填
+                    if (speaker !in pronounSpeakers) {
+                        lastNamedAny = speaker
+                        when (gender) {
+                            Gender.MALE -> lastNamedMale = speaker
+                            Gender.FEMALE -> lastNamedFemale = speaker
+                            Gender.UNKNOWN -> Unit
+                        }
+                    }
                 }
             }
             cursor = span.end
@@ -163,6 +192,37 @@ object RuleEngine {
 
         // 合并过短旁白碎片，避免 ZipVoice 频繁切换参考音频
         return mergeShortNarration(result)
+    }
+
+    /**
+     * 把规则抽取结果变成最终说话人：
+     * 1. 具名 → 原样
+     * 2. 代词「他/她」→ 回填最近同性别具名；性别未知的最近具名也可兜底
+     *    （「林风皱眉道…他沉声道」——林风本身无线索性别，但仍应延续林风）
+     * 3. 有说/道动词但无人名（「叹了口气道」）→ 延续上一说话人，不走轮替
+     * 4. 无任何归因 → 对话轮替猜测
+     */
+    private fun resolveEffectiveSpeaker(
+        rawSpeaker: String?,
+        hasVerb: Boolean,
+        lastSpeaker: String,
+        prevSpeaker: String?,
+        carryLast: String?,
+        carryPrev: String?,
+        prevEndedWithQuote: Boolean,
+        lastNamedMale: String?,
+        lastNamedFemale: String?,
+        lastNamedAny: String?
+    ): String {
+        if (rawSpeaker == "他") return lastNamedMale ?: lastNamedAny ?: rawSpeaker
+        if (rawSpeaker == "她") return lastNamedFemale ?: lastNamedAny ?: rawSpeaker
+        if (rawSpeaker != null) return rawSpeaker
+        if (hasVerb && lastSpeaker != Utterance.SPEAKER_NARRATOR) {
+            return lastSpeaker
+        }
+        return guessAlternatingSpeaker(
+            lastSpeaker, prevSpeaker, carryLast, carryPrev, prevEndedWithQuote
+        )
     }
 
     /**
@@ -268,22 +328,25 @@ object RuleEngine {
     }
 
     /**
-     * 从引号前提示语解析说话人；无法确定（无动词/无人名/无代词）返回 null，
-     * 由调用方走对话轮替猜测。
+     * 从引号前提示语解析说话人。
+     *
+     * @return first=人名/代词（无法确定时为 null）；second=是否找到说/道动词
+     * （有动词但无人名 → 「叹了口气道」类，由调用方延续上一说话人）
      */
-    private fun resolveSpeaker(beforeQuote: String): String? {
+    private fun resolveSpeaker(beforeQuote: String): Pair<String?, Boolean> {
         // 在引号前定位「最长」说/道动词，避免「低声道」被「道」截断
-        val verb = findLastSpeechVerb(beforeQuote) ?: return null
+        val verb = findLastSpeechVerb(beforeQuote) ?: return null to false
         val prefix = beforeQuote.substring(0, verb.first)
-        extractSubjectName(prefix)?.let { return it }
+        extractSubjectName(prefix)?.let { return it to true }
         // 裸代词主语（她心想：/他说道：）：用代词本身当说话人，让性别路由生效
         val clause = lastClause(prefix)
-        return when {
+        val pronoun = when {
             clause.startsWith("她") -> "她"
             clause.startsWith("他") -> "他"
             clause.startsWith("两人") || clause.startsWith("众人") -> "众人"
             else -> null
         }
+        return pronoun to true
     }
 
     /**
@@ -442,7 +505,10 @@ object RuleEngine {
         if (token.first() in nameStopFirstChars) return null
         if (token.last() in nameStopLastChars) return null
         if (token.any { it in nameStopAnyChars }) return null
-        if (token.contains('完') || token.contains('着') || token.contains('的') || token.contains('之')) return null
+        // 「了/着/的/之/完」是虚词或体标记，夹在中间说明切进了动作短语（叹了口）
+        if (token.any { it == '完' || it == '着' || it == '了' || it == '的' || it == '之' }) {
+            return null
+        }
         if (token.length == 2 && token[0] == token[1]) return null
         // AABB 叠词（小心翼翼/隐隐约约/心翼翼…）与 ABB 尾叠词（怯生生/慢腾腾…）
         if (token.length == 4 && (token[0] == token[1] || token[2] == token[3])) return null
@@ -494,9 +560,14 @@ object RuleEngine {
         fearHints.forEach { if (src.contains(it)) bump(EmotionTag.FEAR, 1f) }
         surpriseHints.forEach { if (src.contains(it)) bump(EmotionTag.SURPRISE, 0.5f) }
 
-        if (inner.endsWith("！") || inner.endsWith("!")) {
-            bump(EmotionTag.ANGER, 0.5f)
-            bump(EmotionTag.SURPRISE, 0.3f)
+        // 加强词：当前最高分情感再抬一档（「狠狠怒道」「猛地惊呼」）
+        val intensifierBoost = intensifiers.count { src.contains(it) }.coerceAtMost(3) * 0.35f
+
+        val bangCount = inner.count { it == '！' || it == '!' }
+        if (bangCount > 0) {
+            val bangBoost = 0.5f + 0.3f * (bangCount - 1).coerceAtMost(2)
+            bump(EmotionTag.ANGER, bangBoost)
+            bump(EmotionTag.SURPRISE, bangBoost * 0.6f)
         }
         if (inner.endsWith("？") || inner.endsWith("?")) {
             bump(EmotionTag.SURPRISE, 0.3f)
@@ -507,7 +578,7 @@ object RuleEngine {
 
         val best = score.maxByOrNull { it.value } ?: return EmotionTag.CALM to 0f
         if (best.value <= 0f) return EmotionTag.CALM to 0f
-        val intensity = (best.value / 3f).coerceIn(0.2f, 1f)
+        val intensity = ((best.value + intensifierBoost) / 3.5f).coerceIn(0.2f, 1f)
         return best.key to intensity
     }
 

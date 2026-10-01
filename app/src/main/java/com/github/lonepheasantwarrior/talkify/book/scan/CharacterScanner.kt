@@ -1,5 +1,8 @@
 package com.github.lonepheasantwarrior.talkify.book.scan
 
+import com.github.lonepheasantwarrior.talkify.book.appearance.AppearanceCueExtractor
+import com.github.lonepheasantwarrior.talkify.book.appearance.CharacterAppearanceStore
+import com.github.lonepheasantwarrior.talkify.book.model.AgeBand
 import com.github.lonepheasantwarrior.talkify.book.model.Gender
 import com.github.lonepheasantwarrior.talkify.book.model.Utterance
 import com.github.lonepheasantwarrior.talkify.book.pipeline.RuleEngine
@@ -11,12 +14,14 @@ import com.github.lonepheasantwarrior.talkify.book.pipeline.RuleEngine
  * @param gender 全书性别投票多数派
  * @param dialogueCount 全书对白句数（按角色聚合）
  * @param sampleQuote 最长对白样例（供用户确认角色时参考）
+ * @param age 旁白面相/年龄多数派（伪装角色可能前后不一，取强度更高/后写）
  */
 data class CharacterProfile(
     val name: String,
     val gender: Gender,
     val dialogueCount: Int,
-    val sampleQuote: String
+    val sampleQuote: String,
+    val age: AgeBand = AgeBand.UNKNOWN
 )
 
 /**
@@ -41,13 +46,17 @@ object CharacterScanner {
         )
 
         val acc = HashMap<String, Acc>()
+        CharacterAppearanceStore.reset()
 
         for (chapter in chapterTexts) {
-            for (u in RuleEngine.analyze(chapter)) {
+            val utterances = RuleEngine.analyze(chapter)
+            val known = LinkedHashSet<String>()
+            for (u in utterances) {
                 if (!u.isQuote) continue
                 val speaker = u.speaker
                 if (speaker == Utterance.SPEAKER_NARRATOR || speaker in NON_CHARACTERS) continue
                 if (speaker.length !in 2..4) continue
+                known += speaker
 
                 val a = acc.getOrPut(speaker) { Acc() }
                 a.count++
@@ -57,6 +66,13 @@ object CharacterScanner {
                     Gender.UNKNOWN -> {}
                 }
                 if (u.text.length > a.sample.length) a.sample = u.text
+            }
+            // 旁白面相/年龄：全书扫描同样边走边记，后章可覆盖前章伪装
+            for (u in utterances) {
+                if (u.isQuote) continue
+                CharacterAppearanceStore.observeAll(
+                    AppearanceCueExtractor.extract(u.text, known)
+                )
             }
         }
 
@@ -71,7 +87,8 @@ object CharacterScanner {
                 name = name,
                 gender = gender,
                 dialogueCount = a.count,
-                sampleQuote = a.sample.take(80)
+                sampleQuote = a.sample.take(80),
+                age = CharacterAppearanceStore.ageFor(name)
             )
         }.sortedByDescending { it.dialogueCount }
 

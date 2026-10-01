@@ -1,20 +1,24 @@
 package com.github.lonepheasantwarrior.talkify.book.router
 
+import com.github.lonepheasantwarrior.talkify.book.appearance.CharacterAppearanceStore
 import com.github.lonepheasantwarrior.talkify.book.config.BookTtsSettings
+import com.github.lonepheasantwarrior.talkify.book.model.AgeBand
 import com.github.lonepheasantwarrior.talkify.book.model.EmotionTag
 import com.github.lonepheasantwarrior.talkify.book.model.Gender
 import com.github.lonepheasantwarrior.talkify.book.model.Utterance
 import com.github.lonepheasantwarrior.talkify.book.store.CharacterBookStore
 
 /**
- * 角色 → 音色 / 语速 解析结果
+ * 角色 → 音色 / 语速 / 停顿 解析结果
  *
  * @param voiceId ZipVoice 参考音色 ID；null 表示沿用用户当前选中音色
  * @param speedMultiplier 相对系统语速的倍率（1.0 = 不变）
+ * @param pauseMsAfter 本句播完后的句间静音（毫秒），用于情感留白与换声线
  */
 data class VoicePlan(
     val voiceId: String?,
-    val speedMultiplier: Float = 1.0f
+    val speedMultiplier: Float = 1.0f,
+    val pauseMsAfter: Int = 0
 )
 
 /**
@@ -23,7 +27,7 @@ data class VoicePlan(
  * 规则：
  * 1. 旁白 → narrator 槽
  * 2. 具名角色：同一说话人稳定映射到 male/female/male2/female2 槽（按性别）
- * 3. 情感 → 语速微调（ZipVoice 无 Instruct 情感）
+ * 3. 情感 → 语速微调 + 句间停顿（ZipVoice 无 Instruct 情感）
  */
 object RoleVoiceRouter {
 
@@ -35,6 +39,9 @@ object RoleVoiceRouter {
     /** 上一句对白的（说话人, 音色）：相邻对白防撞声线 */
     private var lastQuoteSpeaker: String? = null
     private var lastQuoteVoice: String? = null
+
+    /** 上一句实际朗读的说话人（换声线时加一点停顿，避免贴脸切换） */
+    private var lastSpokenSpeaker: String? = null
 
     /**
      * 相邻对白防撞：上一句不同角色刚用过同一音色时返回 true，
@@ -52,6 +59,7 @@ object RoleVoiceRouter {
         if (voiceId == null) return
         lastQuoteSpeaker = speaker
         lastQuoteVoice = voiceId
+        lastSpokenSpeaker = speaker
     }
 
     fun resetSession() {
@@ -60,6 +68,8 @@ object RoleVoiceRouter {
         femaleAssignCount = 0
         lastQuoteSpeaker = null
         lastQuoteVoice = null
+        lastSpokenSpeaker = null
+        CharacterAppearanceStore.reset()
     }
 
     fun resolve(utterance: Utterance, fallbackVoiceId: String?): VoicePlan {
@@ -70,8 +80,9 @@ object RoleVoiceRouter {
             femaleAssignCount = 0
         }
         val voiceId = resolveVoiceId(utterance, fallbackVoiceId)
-        val speed = speedFor(utterance.emotion, utterance.intensity)
-        return VoicePlan(voiceId = voiceId, speedMultiplier = speed)
+        val speed = speedFor(utterance.emotion, utterance.intensity, utterance.speaker)
+        val pause = pauseFor(utterance)
+        return VoicePlan(voiceId = voiceId, speedMultiplier = speed, pauseMsAfter = pause)
     }
 
     /**
@@ -134,15 +145,55 @@ object RoleVoiceRouter {
         return BookTtsSettings.voiceForRole(slot) ?: fallbackVoiceId
     }
 
-    private fun speedFor(emotion: EmotionTag, intensity: Float): Float {
+    /**
+     * 情感 + 年龄段 → 语速倍率。
+     *
+     * 情感用二次曲线：低强度几乎不动，高强度拉开差距。
+     * 年龄是旁白面相的弱先验：老者略沉、孩童略快，幅度远小于情感。
+     */
+    private fun speedFor(emotion: EmotionTag, intensity: Float, speaker: String): Float {
         val k = intensity.coerceIn(0f, 1f)
-        return when (emotion) {
-            EmotionTag.CALM -> 1.0f
-            EmotionTag.JOY -> 1.0f + 0.06f * k
-            EmotionTag.ANGER -> 1.0f + 0.10f * k
-            EmotionTag.SADNESS -> 1.0f - 0.10f * k
-            EmotionTag.FEAR -> 1.0f + 0.12f * k
-            EmotionTag.SURPRISE -> 1.0f + 0.08f * k
-        }.coerceIn(0.85f, 1.2f)
+        val shaped = k * k
+        val emotionDelta = when (emotion) {
+            EmotionTag.CALM -> 0f
+            EmotionTag.JOY -> 0.08f * shaped
+            EmotionTag.ANGER -> 0.14f * shaped
+            EmotionTag.SADNESS -> -0.14f * shaped
+            EmotionTag.FEAR -> 0.16f * shaped
+            EmotionTag.SURPRISE -> 0.10f * shaped
+        }
+        val ageDelta = when (CharacterAppearanceStore.ageFor(speaker)) {
+            AgeBand.ELDER -> -0.04f
+            AgeBand.CHILD, AgeBand.YOUTH -> 0.03f
+            AgeBand.ADULT, AgeBand.UNKNOWN -> 0f
+        }
+        return (1f + emotionDelta + ageDelta).coerceIn(0.80f, 1.25f)
+    }
+
+    /**
+     * 情感/换角 → 句间停顿（毫秒）。
+     *
+     * - 旁白：短平快，不拖节奏
+     * - 悲伤/愤怒高强：多留白，像人念完重话要喘一下
+     * - 恐惧：语速快、停顿短
+     * - 换说话人：额外加一点，声线切换不贴脸
+     */
+    private fun pauseFor(utterance: Utterance): Int {
+        val k = utterance.intensity.coerceIn(0f, 1f)
+        val base = when (utterance.emotion) {
+            EmotionTag.CALM -> 40
+            EmotionTag.JOY -> 50 + (30 * k).toInt()
+            EmotionTag.ANGER -> 60 + (80 * k).toInt()
+            EmotionTag.SADNESS -> 80 + (100 * k).toInt()
+            EmotionTag.FEAR -> 40 + (40 * k).toInt()
+            EmotionTag.SURPRISE -> 50 + (50 * k).toInt()
+        }
+        val isNarration = !utterance.isQuote || utterance.speaker == Utterance.SPEAKER_NARRATOR
+        return when {
+            isNarration -> base.coerceAtMost(60)
+            lastSpokenSpeaker != null && lastSpokenSpeaker != utterance.speaker ->
+                (base + 40).coerceAtMost(200)
+            else -> base.coerceAtMost(160)
+        }
     }
 }

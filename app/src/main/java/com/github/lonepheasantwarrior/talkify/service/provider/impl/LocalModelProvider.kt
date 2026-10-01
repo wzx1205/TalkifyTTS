@@ -490,7 +490,24 @@ class LocalModelProvider : AbstractTtsProvider() {
             }
             !isCancelled
         }
+        // 情感留白 / 换声线：句末补一段静音，避免下一句贴脸跟上
+        if (completed && plan.pauseMsAfter > 0 && !isCancelled) {
+            emitSilence(listener, plan.pauseMsAfter)
+        }
         return completed && !isCancelled
+    }
+
+    /** 按毫秒下发 16-bit 单声道静音 PCM（与 Sherpa 输出格式一致） */
+    private fun emitSilence(listener: TtsSynthesisListener, ms: Int) {
+        val sampleRate = 24000
+        val byteCount = (sampleRate * ms / 1000) * 2
+        if (byteCount <= 0) return
+        listener.onAudioAvailable(
+            ByteArray(byteCount),
+            sampleRate,
+            AudioFormat.ENCODING_PCM_16BIT,
+            1
+        )
     }
 
     /**

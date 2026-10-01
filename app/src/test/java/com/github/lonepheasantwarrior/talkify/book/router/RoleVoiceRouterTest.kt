@@ -71,4 +71,55 @@ class RoleVoiceRouterTest {
         val plan = RoleVoiceRouter.resolve(quote("小玉", Gender.FEMALE), null)
         assertEquals("zh_female_qingchezizi_uranus_bigtts", plan.voiceId)
     }
+
+    @Test
+    fun `高强度悲伤压慢语速并加长停顿`() {
+        RoleVoiceRouter.resetSession()
+        val calm = RoleVoiceRouter.resolve(
+            quote("林风").copy(emotion = EmotionTag.CALM, intensity = 0f), null
+        )
+        val sad = RoleVoiceRouter.resolve(
+            quote("林风").copy(emotion = EmotionTag.SADNESS, intensity = 1f), null
+        )
+        assertTrue("sad speed=${sad.speedMultiplier} should be slower than calm=${calm.speedMultiplier}",
+            sad.speedMultiplier < calm.speedMultiplier)
+        assertTrue("sad pause=${sad.pauseMsAfter} should exceed calm=${calm.pauseMsAfter}",
+            sad.pauseMsAfter > calm.pauseMsAfter)
+    }
+
+    @Test
+    fun `高强度恐惧加速语速`() {
+        RoleVoiceRouter.resetSession()
+        val calm = RoleVoiceRouter.resolve(
+            quote("林风").copy(emotion = EmotionTag.CALM, intensity = 0f), null
+        )
+        val fear = RoleVoiceRouter.resolve(
+            quote("林风").copy(emotion = EmotionTag.FEAR, intensity = 1f), null
+        )
+        assertTrue(fear.speedMultiplier > calm.speedMultiplier)
+    }
+
+    @Test
+    fun `换说话人时停顿不短于同角续说`() {
+        RoleVoiceRouter.resetSession()
+        val first = RoleVoiceRouter.resolve(quote("林风"), null)
+        RoleVoiceRouter.registerSpoken("林风", first.voiceId)
+        val same = RoleVoiceRouter.resolve(quote("林风"), null)
+        RoleVoiceRouter.registerSpoken("林风", same.voiceId)
+        val other = RoleVoiceRouter.resolve(quote("傅山"), null)
+        assertTrue("switch pause=${other.pauseMsAfter} vs same=${same.pauseMsAfter}",
+            other.pauseMsAfter >= same.pauseMsAfter)
+    }
+
+    @Test
+    fun `旁白停顿不过长`() {
+        RoleVoiceRouter.resetSession()
+        val narration = Utterance(
+            text = "旁白文本。",
+            emotion = EmotionTag.SADNESS,
+            intensity = 1f
+        )
+        val plan = RoleVoiceRouter.resolve(narration, null)
+        assertTrue(plan.pauseMsAfter <= 60)
+    }
 }

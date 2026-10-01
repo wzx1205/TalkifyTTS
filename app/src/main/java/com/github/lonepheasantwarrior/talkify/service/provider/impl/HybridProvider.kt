@@ -237,6 +237,10 @@ class HybridProvider : AbstractTtsProvider() {
                         }
                     }
                     if (!ok || isCancelled) return@launch
+                    // 情感留白 / 换声线：句间静音（与本地引擎同一 VoicePlan 曲线）
+                    if (plan.pauseMsAfter > 0 && !isCancelled) {
+                        emitSilence(listener, plan.pauseMsAfter)
+                    }
                 }
                 if (!isCancelled) {
                     withContext(Dispatchers.Main) { listener.onSynthesisCompleted() }
@@ -373,5 +377,18 @@ class HybridProvider : AbstractTtsProvider() {
                 true
             }
         }
+    }
+
+    /** 句间静音（16-bit 单声道，24 kHz，与本 Provider 音频配置一致） */
+    private fun emitSilence(listener: TtsSynthesisListener, ms: Int) {
+        val sampleRate = 24000
+        val byteCount = (sampleRate * ms / 1000) * 2
+        if (byteCount <= 0) return
+        listener.onAudioAvailable(
+            ByteArray(byteCount),
+            sampleRate,
+            android.media.AudioFormat.ENCODING_PCM_16BIT,
+            1
+        )
     }
 }

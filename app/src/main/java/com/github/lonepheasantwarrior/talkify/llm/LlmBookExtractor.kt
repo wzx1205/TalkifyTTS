@@ -1,5 +1,6 @@
 package com.github.lonepheasantwarrior.talkify.llm
 
+import com.github.lonepheasantwarrior.talkify.book.model.AgeBand
 import com.github.lonepheasantwarrior.talkify.book.model.EmotionTag
 import com.github.lonepheasantwarrior.talkify.book.model.Gender
 import com.github.lonepheasantwarrior.talkify.book.model.Utterance
@@ -35,7 +36,8 @@ object LlmBookExtractor {
     data class Correction(
         val speaker: String? = null,
         val gender: Gender? = null,
-        val emotion: EmotionTag? = null
+        val emotion: EmotionTag? = null,
+        val age: AgeBand? = null
     )
 
     /**
@@ -63,16 +65,19 @@ object LlmBookExtractor {
         sb.append("<|im_start|>system\n")
         sb.append("你是中文小说对白分析助手。用户给出若干条对白，每条附有【上文】线索。")
         sb.append("请为每一条判断：speaker（说话人姓名）、gender（male/female）、")
-        sb.append("emotion（CALM/JOY/ANGER/SADNESS/FEAR/SURPRISE）。\n")
+        sb.append("emotion（CALM/JOY/ANGER/SADNESS/FEAR/SURPRISE）、")
+        sb.append("age（CHILD/YOUTH/ADULT/ELDER/UNKNOWN，依据上文面相年龄词；没有则 UNKNOWN）。\n")
         sb.append("规则：\n")
         sb.append("1) 只输出一个 JSON 数组，不要解释、不要 markdown 代码块；\n")
         sb.append("2) 数组必须正好 ").append(items.size).append(" 条，格式 ")
-        sb.append("{\"i\":序号,\"speaker\":\"姓名\",\"gender\":\"male\",\"emotion\":\"CALM\"}；\n")
+        sb.append("{\"i\":序号,\"speaker\":\"姓名\",\"gender\":\"male\",\"emotion\":\"CALM\",\"age\":\"UNKNOWN\"}；\n")
         sb.append("3) speaker 优先取【上文】里的人名（如「裴钱咬了咬牙，低声道：」→裴钱），")
         sb.append("上文没有名字时用「未知」；不要把动作词（咬牙、皱眉、笑道）当成人名；\n")
         sb.append("4) gender 不确定时按语境推断，尽量给 male 或 female；\n")
         sb.append("5) emotion 依据上文提示语判断：笑/欢呼→JOY，怒/吼/冷哼→ANGER，")
         sb.append("哭/叹/低哑→SADNESS，颤/惊惧→FEAR，惊讶/愣→SURPRISE，其余 CALM。\n")
+        sb.append("6) age：上文出现 少年/少女/青年→YOUTH，孩童/童子→CHILD，中年→ADULT，")
+        sb.append("老者/白发/花甲→ELDER；无可靠线索一律 UNKNOWN。\n")
         sb.append("<|im_end|>\n")
         sb.append("<|im_start|>user\n")
         items.forEachIndexed { i, (ctx, text) ->
@@ -107,7 +112,8 @@ object LlmBookExtractor {
             val correction = Correction(
                 speaker = obj.optString("speaker").trim().takeIf { it.isNotBlank() && it != "未知" },
                 gender = parseGender(obj.optString("gender")),
-                emotion = parseEmotion(obj.optString("emotion"))
+                emotion = parseEmotion(obj.optString("emotion")),
+                age = parseAge(obj.optString("age"))
             )
             if (!result.containsKey(idx)) result[idx] = correction
         }
@@ -183,6 +189,14 @@ object LlmBookExtractor {
         else -> null
     }
 
+    private fun parseAge(s: String): AgeBand? = when (s.trim().uppercase()) {
+        "CHILD", "KID", "童" -> AgeBand.CHILD
+        "YOUTH", "TEEN", "少年", "青年" -> AgeBand.YOUTH
+        "ADULT", "MIDDLE", "中年" -> AgeBand.ADULT
+        "ELDER", "OLD", "老", "老年" -> AgeBand.ELDER
+        else -> null
+    }
+
     /**
      * 把校正结果套回 utterances
      *
@@ -242,6 +256,23 @@ object LlmBookExtractor {
             return utterances
         }
         TtsLogger.i("LLM corrected ${corrections.size}/${quotes.size} quotes", tag = TAG)
-        return apply(utterances, corrections)
+        val result = apply(utterances, corrections)
+        // LLM 给出的 age 也写入面相记忆（伪装场景仍以后文旁白覆盖为准）
+        feedAgeToStore(result, corrections)
+        return result
+    }
+
+    private fun feedAgeToStore(utterances: List<Utterance>, corrections: Map<Int, Correction>) {
+        if (corrections.isEmpty()) return
+        var qIdx = -1
+        for (u in utterances) {
+            if (!u.isQuote || u.speaker == Utterance.SPEAKER_NARRATOR) continue
+            qIdx++
+            val age = corrections[qIdx]?.age ?: continue
+            if (age != AgeBand.UNKNOWN && u.speaker != "他" && u.speaker != "她") {
+                com.github.lonepheasantwarrior.talkify.book.appearance.CharacterAppearanceStore
+                    .observe(u.speaker, age, strength = 2)
+            }
+        }
     }
 }

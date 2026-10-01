@@ -163,4 +163,69 @@ class RuleEngineTest {
         assertTrue(!utterances[0].isQuote)
         assertTrue(utterances[0].text.startsWith("总经理的为人"))
     }
+
+    @Test
+    fun `代词提示语回填最近具名男角色`() {
+        // 「林风皱眉道」后接「他沉声道」——不应串成通用「他」声线
+        val text = "林风皱眉道：“此事有诈。”他沉声道：“再探。”"
+        val quotes = RuleEngine.analyze(text).filter { it.isQuote }
+        assertEquals(2, quotes.size)
+        assertEquals("林风", quotes[0].speaker)
+        assertEquals("林风", quotes[1].speaker)
+        assertEquals(Gender.MALE, quotes[1].gender)
+    }
+
+    @Test
+    fun `代词提示语回填最近具名女角色`() {
+        val text = "苏晴笑道：“走吧。”她叹道：“也只能这样了。”"
+        val quotes = RuleEngine.analyze(text).filter { it.isQuote }
+        assertEquals(2, quotes.size)
+        assertEquals("苏晴", quotes[0].speaker)
+        assertEquals("苏晴", quotes[1].speaker)
+        assertEquals(Gender.FEMALE, quotes[1].gender)
+    }
+
+    @Test
+    fun `无名动作提示语延续上一说话人`() {
+        // 「叹了口气道」抽不出人名，也不该走轮替切到别人
+        val text = "林风说道：“我知道了。”叹了口气道：“太晚了。”"
+        val quotes = RuleEngine.analyze(text).filter { it.isQuote }
+        assertEquals(2, quotes.size)
+        assertEquals("林风", quotes[0].speaker)
+        assertEquals("林风", quotes[1].speaker)
+    }
+
+    @Test
+    fun `跨段代词回填具名角色`() {
+        val p1 = "陈平安低声道：“走。”"
+        val q1 = RuleEngine.analyze(
+            p1, carryLastNamedMale = null, carryLastNamedFemale = null
+        ).filter { it.isQuote }.first()
+        assertEquals("陈平安", q1.speaker)
+        val p2 = "他皱眉道：“等等。”"
+        val q2 = RuleEngine.analyze(
+            p2,
+            carryLast = "陈平安",
+            carryLastNamedMale = "陈平安",
+            carryLastNamedFemale = null
+        ).filter { it.isQuote }.first()
+        assertEquals("陈平安", q2.speaker)
+    }
+
+    @Test
+    fun `加强词抬高情感强度`() {
+        val weak = RuleEngine.analyze("林风怒道：“滚。”").first { it.isQuote }
+        val strong = RuleEngine.analyze("林风狠狠怒道：“滚。”").first { it.isQuote }
+        assertEquals(EmotionTag.ANGER, weak.emotion)
+        assertEquals(EmotionTag.ANGER, strong.emotion)
+        assertTrue("intensity=${strong.intensity} should exceed ${weak.intensity}",
+            strong.intensity > weak.intensity)
+    }
+
+    @Test
+    fun `多重感叹号增强愤怒`() {
+        val one = RuleEngine.analyze("他吼道：“住手！”").first { it.isQuote }
+        val three = RuleEngine.analyze("他吼道：“住手！！！”").first { it.isQuote }
+        assertTrue(three.intensity >= one.intensity)
+    }
 }
