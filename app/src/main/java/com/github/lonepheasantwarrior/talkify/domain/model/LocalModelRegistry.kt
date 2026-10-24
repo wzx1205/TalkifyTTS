@@ -364,70 +364,11 @@ object LocalModelRegistry {
     )
 
     /**
-     * voistock-2890 二次元角色包（CjangCjengh/VITS 系，cjke_cleaners2 IPA 音素）
-     *
-     * 来源链（已核实）：
-     * - 原始权重：HuggingFace Space skytnt/moe-tts saved_model/15（2890 角色多说话人 VITS）
-     * - 本地转换：voistock-2890.pth → ONNX（torch.onnx.export，68 符号与 checkpoint
-     *   text_embedding [68,192] 逐一对齐验证）；lexicon 由 pypinyin 单字/词组表经
-     *   chinese_to_ipa 生成（与训练期 cjke_cleaners2 的 [ZH] 分支同源），共 68055 条，
-     *   含 0-99 数字；dict/ 复用官方 MeloTTS 包的 cppjieba 词典
-     *
-     * 分发方式：**不做在线下载**（空下载映射）。模型文件由 PC 侧转换产物 adb 推送到
-     * tts_models/vits_voistock_2890/deployed/，推送完成后下载状态自动变为已就绪；
-     * 未推送时点「下载」会因文件校验失败报错，属预期。
-     *
-     * 音色为 16 个精选知名角色（speakerId 与 speakers.csv 对齐）；完整 2890 角色表见
-     * speakers.csv。日语原生平模，中文由 IPA lexicon 前端驱动（试听通过，RTF≈0.2 PC）。
-     *
-     * 许可注意：模型在声优表演数据上训练，角色声音权利属原作方/声优，仅限个人使用，
-     * 不得随 APK 分发或商用。
-     */
-    val VITS_VOISTOCK_2890 = LocalModelInfo(
-        id = "vits_voistock_2890",
-        displayName = "二次元角色包 · 2890 音色",
-        description = "多说话人 VITS 角色音色库（22kHz），精选 16 角色：亚丝娜/加藤惠/桐人/蕾姆/Saber 等，中文可读，个人使用",
-        downloadSizeBytes = 138_000_000L,
-        downloadSizeDisplay = "~136 MB",
-        md5 = "",
-        downloadFileInfo = emptyMap(),
-        requiredLocalFiles = listOf(
-            "voistock-2890.onnx",
-            "tokens.txt",
-            "lexicon.txt",
-            "dict/jieba.dict.utf8"
-        ),
-        archiveAssets = emptyMap(),
-        voiceList = listOf(
-            LocalModelVoice(voiceId = "voistock_1217", displayName = "亚丝娜（戸松遥）SAO", language = "zh", speakerId = 1217, gender = Gender.FEMALE),
-            LocalModelVoice(voiceId = "voistock_1756", displayName = "加藤惠（安野希世乃）路人女主", language = "zh", speakerId = 1756, gender = Gender.FEMALE),
-            LocalModelVoice(voiceId = "voistock_1222", displayName = "桐人（松岡禎丞）SAO", language = "zh", speakerId = 1222, gender = Gender.MALE),
-            LocalModelVoice(voiceId = "voistock_590", displayName = "蕾姆（水瀬いのり）Re:0", language = "zh", speakerId = 590, gender = Gender.FEMALE),
-            LocalModelVoice(voiceId = "voistock_588", displayName = "拉姆（村川梨衣）Re:0", language = "zh", speakerId = 588, gender = Gender.FEMALE),
-            LocalModelVoice(voiceId = "voistock_573", displayName = "爱蜜莉雅（高橋李依）Re:0", language = "zh", speakerId = 573, gender = Gender.FEMALE),
-            LocalModelVoice(voiceId = "voistock_121", displayName = "阿尔托利亚/Saber（川澄綾子）Fate", language = "zh", speakerId = 121, gender = Gender.FEMALE),
-            LocalModelVoice(voiceId = "voistock_378", displayName = "远坂凛（植田佳奈）Fate", language = "zh", speakerId = 378, gender = Gender.FEMALE),
-            LocalModelVoice(voiceId = "voistock_369", displayName = "卫宫士郎（杉山紀彰）Fate", language = "zh", speakerId = 369, gender = Gender.MALE),
-            LocalModelVoice(voiceId = "voistock_1311", displayName = "时崎狂三（真田アサミ）约会大作战", language = "zh", speakerId = 1311, gender = Gender.FEMALE),
-            LocalModelVoice(voiceId = "voistock_1310", displayName = "五河琴里（竹達彩奈）约会大作战", language = "zh", speakerId = 1310, gender = Gender.FEMALE),
-            LocalModelVoice(voiceId = "voistock_1764", displayName = "初音未来（藤田咲）", language = "zh", speakerId = 1764, gender = Gender.FEMALE),
-            LocalModelVoice(voiceId = "voistock_2330", displayName = "绫波丽（林原めぐみ）EVA", language = "zh", speakerId = 2330, gender = Gender.FEMALE),
-            LocalModelVoice(voiceId = "voistock_2312", displayName = "式波·明日香（宮村優子）EVA", language = "zh", speakerId = 2312, gender = Gender.FEMALE),
-            LocalModelVoice(voiceId = "voistock_2333", displayName = "葛城美里（三石琴乃）EVA", language = "zh", speakerId = 2333, gender = Gender.FEMALE),
-            LocalModelVoice(voiceId = "voistock_2316", displayName = "渚薰（石田彰）EVA", language = "zh", speakerId = 2316, gender = Gender.MALE),
-        ),
-        sampleRate = 22050,
-        supportedLanguages = listOf("zh"),
-        architecture = LocalModelArchitecture.MELO_VITS
-    )
-
-    /**
      * 所有已注册的本地模型列表
      */
     val ALL_MODELS: List<LocalModelInfo> = listOf(
         MELO_TTS_ZH_EN,
         VITS_ZH_FANCHEN_C,
-        VITS_VOISTOCK_2890,
         ZIPVOICE_DISTILL
     )
 

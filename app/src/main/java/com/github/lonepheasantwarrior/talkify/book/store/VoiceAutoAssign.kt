@@ -259,37 +259,8 @@ object VoiceAutoAssign {
      * fanchen 多说话人包 → 它自己的性别池；其余（ZipVoice/未来 VITS 包）→ 内置池。
      * 返回 (女声池, 男声池)，供自动分配与连播防撞共用，保证两处行为一致。
      */
-    /**
-     * voistock-2890（vits_voistock_2890）的性别池
-     *
-     * 精选 16 角色（13 女 / 3 男），voiceId 与 LocalModelRegistry 的
-     * voiceList 对齐；女池按"主角优先"排列（亚丝娜/加藤惠为该包目标角色）。
-     */
-    private val VOISTOCK_FEMALE_POOL = listOf(
-        "voistock_1217", // 亚丝娜
-        "voistock_1756", // 加藤惠
-        "voistock_590",  // 蕾姆
-        "voistock_573",  // 爱蜜莉雅
-        "voistock_588",  // 拉姆
-        "voistock_121",  // Saber
-        "voistock_378",  // 远坂凛
-        "voistock_1311", // 时崎狂三
-        "voistock_1310", // 五河琴里
-        "voistock_1764", // 初音未来
-        "voistock_2330", // 绫波丽
-        "voistock_2312", // 明日香
-        "voistock_2333"  // 葛城美里
-    )
-
-    private val VOISTOCK_MALE_POOL = listOf(
-        "voistock_1222", // 桐人
-        "voistock_369",  // 卫宫士郎
-        "voistock_2316"  // 渚薰
-    )
-
     fun poolsForLocalModel(modelInfo: com.github.lonepheasantwarrior.talkify.domain.model.LocalModelInfo?): Pair<List<String>, List<String>> {
         if (modelInfo?.id == "vits_zh_fanchen_c") return FANCHEN_FEMALE_POOL to FANCHEN_MALE_POOL
-        if (modelInfo?.id == "vits_voistock_2890") return VOISTOCK_FEMALE_POOL to VOISTOCK_MALE_POOL
         return FEMALE_POOL to MALE_POOL
     }
 
