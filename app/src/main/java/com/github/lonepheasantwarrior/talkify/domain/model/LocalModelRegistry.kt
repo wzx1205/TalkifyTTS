@@ -377,8 +377,11 @@ object LocalModelRegistry {
      * tts_models/vits_voistock_2890/deployed/，推送完成后下载状态自动变为已就绪；
      * 未推送时点「下载」会因文件校验失败报错，属预期。
      *
-     * 音色为 16 个精选知名角色（speakerId 与 speakers.csv 对齐）；完整 2890 角色表见
-     * speakers.csv。日语原生平模，中文由 IPA lexicon 前端驱动（试听通过，RTF≈0.2 PC）。
+     * 音色为 63 个精选角色（speakerId 与 speakers.csv 对齐，完整 2890 角色表见
+     * speakers.csv）：16 主角 + 47 路人池。路人池性别由声学基频判定
+     * （合成固定中文句 → librosa.pyin 中位 F0，阈值 180Hz，实测男女区间
+     * 103-161 / 202-425Hz 天然空档零歧义），音色带按 F0 排序分档。
+     * 日语原生平模，中文由 IPA lexicon 前端驱动（试听通过，RTF≈0.2 PC）。
      *
      * 许可注意：模型在声优表演数据上训练，角色声音权利属原作方/声优，仅限个人使用，
      * 不得随 APK 分发或商用。
@@ -386,7 +389,7 @@ object LocalModelRegistry {
     val VITS_VOISTOCK_2890 = LocalModelInfo(
         id = "vits_voistock_2890",
         displayName = "二次元角色包 · 2890 音色",
-        description = "多说话人 VITS 角色音色库（22kHz），精选 16 角色：亚丝娜/加藤惠/桐人/蕾姆/Saber 等，中文可读，个人使用",
+        description = "多说话人 VITS 角色音色库（22kHz），63 音色：16 主角 + 47 路人池（声学定男女），中文可读，个人使用",
         downloadSizeBytes = 138_000_000L,
         downloadSizeDisplay = "~136 MB",
         md5 = "",
@@ -399,6 +402,7 @@ object LocalModelRegistry {
         ),
         archiveAssets = emptyMap(),
         voiceList = listOf(
+            // ---- 主角精选（16）----
             LocalModelVoice(voiceId = "voistock_1217", displayName = "亚丝娜（戸松遥）SAO", language = "zh", speakerId = 1217, gender = Gender.FEMALE),
             LocalModelVoice(voiceId = "voistock_1756", displayName = "加藤惠（安野希世乃）路人女主", language = "zh", speakerId = 1756, gender = Gender.FEMALE),
             LocalModelVoice(voiceId = "voistock_1222", displayName = "桐人（松岡禎丞）SAO", language = "zh", speakerId = 1222, gender = Gender.MALE),
@@ -415,6 +419,57 @@ object LocalModelRegistry {
             LocalModelVoice(voiceId = "voistock_2312", displayName = "式波·明日香（宮村優子）EVA", language = "zh", speakerId = 2312, gender = Gender.FEMALE),
             LocalModelVoice(voiceId = "voistock_2333", displayName = "葛城美里（三石琴乃）EVA", language = "zh", speakerId = 2333, gender = Gender.FEMALE),
             LocalModelVoice(voiceId = "voistock_2316", displayName = "渚薰（石田彰）EVA", language = "zh", speakerId = 2316, gender = Gender.MALE),
+            // ---- 路人池·女声·低柔（16，实测 F0 202-297Hz 升序）----
+            LocalModelVoice(voiceId = "voistock_1224", displayName = "诗乃（SAO）· 女声·低柔", language = "zh", speakerId = 1224, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_1228", displayName = "有纪（SAO）· 女声·低柔", language = "zh", speakerId = 1228, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_752", displayName = "维兹（为美好的世界）· 女声·低柔", language = "zh", speakerId = 752, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_931", displayName = "企业（碧蓝航线）· 女声·低柔", language = "zh", speakerId = 931, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_1220", displayName = "阿尔戈（SAO）· 女声·低柔", language = "zh", speakerId = 1220, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_807", displayName = "御坂美琴（超电磁炮）· 女声·低柔", language = "zh", speakerId = 807, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_940", displayName = "齐柏林（碧蓝航线）· 女声·低柔", language = "zh", speakerId = 940, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_862", displayName = "雪之下雪乃（春物）· 女声·低柔", language = "zh", speakerId = 862, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_857", displayName = "一色彩羽（春物）· 女声·低柔", language = "zh", speakerId = 857, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_1226", displayName = "米特（SAO）· 女声·低柔", language = "zh", speakerId = 1226, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_1527", displayName = "可可萝（公主连结）· 女声·低柔", language = "zh", speakerId = 1527, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_760", displayName = "理世（点兔）· 女声·低柔", language = "zh", speakerId = 760, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_754", displayName = "达克妮斯（为美好的世界）· 女声·低柔", language = "zh", speakerId = 754, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_73", displayName = "古河渚（CLANNAD）· 女声·低柔", language = "zh", speakerId = 73, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_74", displayName = "藤林杏（CLANNAD）· 女声·低柔", language = "zh", speakerId = 74, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_1526", displayName = "凯露（公主连结）· 女声·低柔", language = "zh", speakerId = 1526, gender = Gender.FEMALE),
+            // ---- 路人池·女声·清亮（16，实测 F0 300-425Hz 升序）----
+            LocalModelVoice(voiceId = "voistock_1218", displayName = "爱丽丝（SAO）· 女声·清亮", language = "zh", speakerId = 1218, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_1232", displayName = "莉兹贝特（SAO）· 女声·清亮", language = "zh", speakerId = 1232, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_751", displayName = "阿库娅（为美好的世界）· 女声·清亮", language = "zh", speakerId = 751, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_748", displayName = "惠惠（为美好的世界）· 女声·清亮", language = "zh", speakerId = 748, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_72", displayName = "琴美（CLANNAD）· 女声·清亮", language = "zh", speakerId = 72, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_922", displayName = "光辉（碧蓝航线）· 女声·清亮", language = "zh", speakerId = 922, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_1227", displayName = "唯（SAO）· 女声·清亮", language = "zh", speakerId = 1227, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_1225", displayName = "西莉卡（SAO）· 女声·清亮", language = "zh", speakerId = 1225, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_757", displayName = "智乃（点兔）· 女声·清亮", language = "zh", speakerId = 757, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_953", displayName = "标枪（碧蓝航线）· 女声·清亮", language = "zh", speakerId = 953, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_935", displayName = "绊爱 · 女声·清亮", language = "zh", speakerId = 935, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_860", displayName = "由比滨结衣（春物）· 女声·清亮", language = "zh", speakerId = 860, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_946", displayName = "萨拉托加（碧蓝航线）· 女声·清亮", language = "zh", speakerId = 946, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_750", displayName = "悠悠（为美好的世界）· 女声·清亮", language = "zh", speakerId = 750, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_1525", displayName = "佩可（公主连结）· 女声·清亮", language = "zh", speakerId = 1525, gender = Gender.FEMALE),
+            LocalModelVoice(voiceId = "voistock_961", displayName = "涅普顿（超次元游戏）· 女声·清亮", language = "zh", speakerId = 961, gender = Gender.FEMALE),
+            // ---- 路人池·男声·低沉（7，实测 F0 103-135Hz 升序）----
+            LocalModelVoice(voiceId = "voistock_218", displayName = "崔斯坦（Fate）· 男声·低沉", language = "zh", speakerId = 218, gender = Gender.MALE),
+            LocalModelVoice(voiceId = "voistock_75", displayName = "乙坂有宇（Charlotte）· 男声·低沉", language = "zh", speakerId = 75, gender = Gender.MALE),
+            LocalModelVoice(voiceId = "voistock_278", displayName = "兰斯洛特（Fate）· 男声·低沉", language = "zh", speakerId = 278, gender = Gender.MALE),
+            LocalModelVoice(voiceId = "voistock_55", displayName = "朽木白哉（BLEACH）· 男声·低沉", language = "zh", speakerId = 55, gender = Gender.MALE),
+            LocalModelVoice(voiceId = "voistock_104", displayName = "阿喀琉斯（Fate）· 男声·低沉", language = "zh", speakerId = 104, gender = Gender.MALE),
+            LocalModelVoice(voiceId = "voistock_183", displayName = "盖提亚（Fate）· 男声·低沉", language = "zh", speakerId = 183, gender = Gender.MALE),
+            LocalModelVoice(voiceId = "voistock_136", displayName = "伊斯坎达尔（Fate）· 男声·低沉", language = "zh", speakerId = 136, gender = Gender.MALE),
+            // ---- 路人池·男声·沉稳（8，实测 F0 137-161Hz 升序）----
+            LocalModelVoice(voiceId = "voistock_117", displayName = "阿周那（Fate）· 男声·沉稳", language = "zh", speakerId = 117, gender = Gender.MALE),
+            LocalModelVoice(voiceId = "voistock_861", displayName = "叶山隼人（春物）· 男声·沉稳", language = "zh", speakerId = 861, gender = Gender.MALE),
+            LocalModelVoice(voiceId = "voistock_1221", displayName = "艾基尔（SAO）· 男声·沉稳", language = "zh", speakerId = 1221, gender = Gender.MALE),
+            LocalModelVoice(voiceId = "voistock_262", displayName = "梅林（Fate）· 男声·沉稳", language = "zh", speakerId = 262, gender = Gender.MALE),
+            LocalModelVoice(voiceId = "voistock_806", displayName = "一方通行（超电磁炮）· 男声·沉稳", language = "zh", speakerId = 806, gender = Gender.MALE),
+            LocalModelVoice(voiceId = "voistock_1231", displayName = "尤吉欧（SAO）· 男声·沉稳", language = "zh", speakerId = 1231, gender = Gender.MALE),
+            LocalModelVoice(voiceId = "voistock_214", displayName = "大卫（Fate）· 男声·沉稳", language = "zh", speakerId = 214, gender = Gender.MALE),
+            LocalModelVoice(voiceId = "voistock_78", displayName = "夜神月（死亡笔记）· 男声·沉稳", language = "zh", speakerId = 78, gender = Gender.MALE),
         ),
         sampleRate = 22050,
         supportedLanguages = listOf("zh"),

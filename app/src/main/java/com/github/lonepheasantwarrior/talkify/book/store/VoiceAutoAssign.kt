@@ -262,10 +262,13 @@ object VoiceAutoAssign {
     /**
      * voistock-2890（vits_voistock_2890）的性别池
      *
-     * 精选 16 角色（13 女 / 3 男），voiceId 与 LocalModelRegistry 的
-     * voiceList 对齐；女池按"主角优先"排列（亚丝娜/加藤惠为该包目标角色）。
+     * 16 主角 + 47 路人池（voiceId 与 LocalModelRegistry 的 voiceList 对齐）。
+     * 池序即自动分配优先级：主角前排（对话量最大的角色先拿），路人池按
+     * 实测基频升序（低柔→清亮 / 低沉→沉稳）随后循环。路人池性别由声学
+     * F0 判定（阈值 180Hz，男女区间 103-161 / 202-425Hz 无重叠）。
      */
     private val VOISTOCK_FEMALE_POOL = listOf(
+        // 主角
         "voistock_1217", // 亚丝娜
         "voistock_1756", // 加藤惠
         "voistock_590",  // 蕾姆
@@ -278,13 +281,65 @@ object VoiceAutoAssign {
         "voistock_1764", // 初音未来
         "voistock_2330", // 绫波丽
         "voistock_2312", // 明日香
-        "voistock_2333"  // 葛城美里
+        "voistock_2333", // 葛城美里
+        // 路人池·女声·低柔（F0 升序）
+        "voistock_1224", // 诗乃
+        "voistock_1228", // 有纪
+        "voistock_752",  // 维兹
+        "voistock_931",  // 企业
+        "voistock_1220", // 阿尔戈
+        "voistock_807",  // 御坂美琴
+        "voistock_940",  // 齐柏林
+        "voistock_862",  // 雪之下雪乃
+        "voistock_857",  // 一色彩羽
+        "voistock_1226", // 米特
+        "voistock_1527", // 可可萝
+        "voistock_760",  // 理世
+        "voistock_754",  // 达克妮斯
+        "voistock_73",   // 古河渚
+        "voistock_74",   // 藤林杏
+        "voistock_1526", // 凯露
+        // 路人池·女声·清亮（F0 升序）
+        "voistock_1218", // 爱丽丝
+        "voistock_1232", // 莉兹贝特
+        "voistock_751",  // 阿库娅
+        "voistock_748",  // 惠惠
+        "voistock_72",   // 琴美
+        "voistock_922",  // 光辉
+        "voistock_1227", // 唯
+        "voistock_1225", // 西莉卡
+        "voistock_757",  // 智乃
+        "voistock_953",  // 标枪
+        "voistock_935",  // 绊爱
+        "voistock_860",  // 由比滨结衣
+        "voistock_946",  // 萨拉托加
+        "voistock_750",  // 悠悠
+        "voistock_1525", // 佩可
+        "voistock_961"   // 涅普顿
     )
 
     private val VOISTOCK_MALE_POOL = listOf(
+        // 主角
         "voistock_1222", // 桐人
         "voistock_369",  // 卫宫士郎
-        "voistock_2316"  // 渚薰
+        "voistock_2316", // 渚薰
+        // 路人池·男声·低沉（F0 升序）
+        "voistock_218",  // 崔斯坦
+        "voistock_75",   // 乙坂有宇
+        "voistock_278",  // 兰斯洛特
+        "voistock_55",   // 朽木白哉
+        "voistock_104",  // 阿喀琉斯
+        "voistock_183",  // 盖提亚
+        "voistock_136",  // 伊斯坎达尔
+        // 路人池·男声·沉稳（F0 升序）
+        "voistock_117",  // 阿周那
+        "voistock_861",  // 叶山隼人
+        "voistock_1221", // 艾基尔
+        "voistock_262",  // 梅林
+        "voistock_806",  // 一方通行
+        "voistock_1231", // 尤吉欧
+        "voistock_214",  // 大卫
+        "voistock_78"    // 夜神月
     )
 
     fun poolsForLocalModel(modelInfo: com.github.lonepheasantwarrior.talkify.domain.model.LocalModelInfo?): Pair<List<String>, List<String>> {
