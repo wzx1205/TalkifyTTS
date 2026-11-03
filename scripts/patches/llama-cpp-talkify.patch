@@ -1,0 +1,337 @@
+# TalkifyTTS 对 llama.cpp @ c32d1dabe819002ca8aa3a885aca4057f5968e3d 的修改:
+# 1) mtmd-helper: NPU 声码器异步契约(vocoder_submit_fn/wait_fn) + finish API
+# 2) mtmd-helper-gen: 帧分段计时桩(TalkifyFrameProf) + 外部声码器路径
+# 由 scripts/fetch-llama-cpp.sh 在拉取 vanilla 后自动应用。
+diff --git a/tools/mtmd/mtmd-helper-gen.cpp b/tools/mtmd/mtmd-helper-gen.cpp
+index 1c58d3a..bc73d8d 100644
+--- a/tools/mtmd/mtmd-helper-gen.cpp
++++ b/tools/mtmd/mtmd-helper-gen.cpp
+@@ -6,6 +6,7 @@
+ 
+ #include <algorithm>
+ #include <cctype>
++#include <chrono>
+ #include <cmath>
+ #include <cstring>
+ #include <memory>
+@@ -13,6 +14,44 @@
+ #include <unordered_map>
+ #include <vector>
+ 
++//TalkifyNPU: 每帧分段计时(predictor/backbone/vocoder),定位 NPU 化的真实收益
++#include <cstdio>
++#if defined(__ANDROID__)
++#include <android/log.h>
++#define TFP_LOG(...) __android_log_print(ANDROID_LOG_INFO, "TalkifyFrameProf", __VA_ARGS__)
++#else
++#define TFP_LOG(...) fprintf(stderr, __VA_ARGS__)
++#endif
++namespace talkify_frame_prof {
++struct Stats {
++    double gen_code_ms = 0;   // code predictor (ggml GEN_CODE)
++    double gen_wav_ms  = 0;   // vocoder windows (amortized)
++    double decode_ms   = 0;   // backbone llama_decode steps
++    int    frames      = 0;
++    void add(double code, double wav, double dec) {
++        gen_code_ms += code; gen_wav_ms += wav; decode_ms += dec; frames++;
++        if (frames % 50 == 0) {
++            TFP_LOG("n=%d avg code=%.1fms wav=%.1fms dec=%.1fms sum=%.1fms",
++                    frames, gen_code_ms / frames, gen_wav_ms / frames, decode_ms / frames,
++                    (gen_code_ms + gen_wav_ms + decode_ms) / frames);
++        }
++    }
++    void summary() {
++        if (frames > 0) {
++            TFP_LOG("SUMMARY n=%d avg code=%.1fms wav=%.1fms dec=%.1fms sum=%.1fms",
++                    frames, gen_code_ms / frames, gen_wav_ms / frames, decode_ms / frames,
++                    (gen_code_ms + gen_wav_ms + decode_ms) / frames);
++        }
++    }
++    void clear() { gen_code_ms = gen_wav_ms = decode_ms = 0; frames = 0; }
++};
++inline double now_ms() {
++    using namespace std::chrono;
++    return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
++}
++inline Stats & stats() { static Stats s; return s; }
++} // namespace talkify_frame_prof
++
+ #ifdef MTMD_INTERNAL_HEADER
+ #error "mtmd-helper is a public library outside of mtmd. it must not include internal headers"
+ #endif
+@@ -92,6 +131,8 @@ public:
+     // set out_stop on end-of-speech, h_state_out must be null if no frame is generated
+     virtual int32_t step_gen(llama_token sampled, const float * h_state_in, const float ** h_state_out, bool * out_stop) = 0;
+     virtual int32_t get_output(int32_t * out_sample_rate, const char ** out_data, size_t * out_data_len, int64_t * out_n_samples) = 0;
++    // 异步声码器:等全部在飞块完成并入 PCM(最后一次 get_output 前调用);同步模式 no-op
++    virtual int32_t finish() { return 0; }
+ 
+ protected:
+     llama_context * lctx;
+@@ -109,6 +150,7 @@ public:
+     using mtmd_gen_audio_pipeline::mtmd_gen_audio_pipeline;
+ 
+     void reset() override {
++        voc_discard_pending(); // 丢弃上一句还在飞的声码块
+         seq_id = 0;
+         pos = 0;
+         codes_buf.clear();
+@@ -123,6 +165,11 @@ public:
+         prompt_pos = 0;
+     }
+ 
++    int32_t finish() override {
++        if (!flush_gen_wav()) return 1;
++        return voc_wait_upto(voc_next_submit) ? 0 : 1;
++    }
++
+     int32_t set_input(const mtmd_helper_gen_audio_inp * inp) override {
+         reset();
+         seq_id = inp->seq_id;
+@@ -208,6 +255,10 @@ public:
+         top_p = inp->top_p > 0 ? inp->top_p : def.top_p;
+         seed  = inp->seed;
+         out_type = inp->out_type;
++        vocoder_fn = inp->vocoder_fn;
++        vocoder_submit_fn = inp->vocoder_submit_fn;
++        vocoder_wait_fn = inp->vocoder_wait_fn;
++        vocoder_ud = inp->vocoder_ud;
+ 
+         // the prompt above holds the whole text stream up to tts_eos, so every generated
+         // frame adds tts_pad on top of the codes embedding
+@@ -267,16 +318,24 @@ public:
+         inp.top_p = top_p;
+         inp.seed  = seed;
+         mtmd_gen_out out{};
++        const double t_code0 = talkify_frame_prof::now_ms();
+         if (mtmd_gen_audio_process(mctx, &inp, &out) != 0) {
+             LOG_ERR("mtmd_helper_gen_audio: gen_code process failed\n");
+             return 1;
+         }
++        const double code_ms = talkify_frame_prof::now_ms() - t_code0;
+ 
+         codes_buf.insert(codes_buf.end(), out.codes, out.codes + out.n_codes);
+-        if (out.n_codes > 0 && codes_buf.size() / out.n_codes >= window_frames) {
++        double wav_ms = 0;
++        // 异步声码器按 25 帧块入队(让 NPU 与 CPU 帧生成流水线并行);
++        // 同步 ggml 路径仍按 72 帧整窗(部分窗口付整窗代价)
++        const size_t flush_frames = vocoder_submit_fn ? 25 : window_frames;
++        if (out.n_codes > 0 && codes_buf.size() / out.n_codes >= flush_frames) {
++            const double t_wav0 = talkify_frame_prof::now_ms();
+             if (!flush_gen_wav()) {
+                 return 1;
+             }
++            wav_ms = talkify_frame_prof::now_ms() - t_wav0;
+         }
+ 
+         std::vector<float> fb(out.embd, out.embd + n_embd);
+@@ -289,10 +348,12 @@ public:
+         batch_embd.batch.logits[0] = 1;
+         pos++;
+ 
++        const double t_dec0 = talkify_frame_prof::now_ms();
+         if (llama_decode(lctx, batch_embd.batch) != 0) {
+             LOG_ERR("mtmd_helper_gen_audio: decode failed\n");
+             return 1;
+         }
++        talkify_frame_prof::stats().add(code_ms, wav_ms, talkify_frame_prof::now_ms() - t_dec0);
+ 
+         const float * he = llama_get_embeddings_ith(lctx, -1);
+         h_state_buf.assign(he, he + n_embd);
+@@ -302,9 +363,19 @@ public:
+     }
+ 
+     int32_t get_output(int32_t * out_sample_rate, const char ** out_data, size_t * out_data_len, int64_t * out_n_samples) override {
++        talkify_frame_prof::stats().summary();
++        talkify_frame_prof::stats().clear();
+         if (!flush_gen_wav()) {
+             return 1;
+         }
++        if (vocoder_submit_fn) {
++            // 异步:留最新一块在飞(让它与下一批帧生成重叠),其余按序取回;
++            // 最后一块由 finish()(尾部发射前)收尾
++            const int64_t upto = voc_next_submit > voc_next_wait ? voc_next_submit - 1 : voc_next_wait;
++            if (!voc_wait_upto(upto)) {
++                return 1;
++            }
++        }
+ 
+         *out_sample_rate = info.sample_rate;
+         if (out_n_samples) {
+@@ -397,11 +468,84 @@ private:
+         return ok;
+     }
+ 
++    // 外部声码器路径(TalkifyNPU):codes_buf [F][16] 按 25 帧块送外部声码器。
++    // 同步模式(vocoder_fn):当场解码。异步模式(submit/wait):入队即回,
++    // 解码在实现方线程上与帧生成流水线并行,PCM 由 voc_wait_upto() 按序取回。
++    bool flush_vocoder_ext() {
++        constexpr int FRAME_CODES   = 16;
++        constexpr int CHUNK_FRAMES  = 25;   // tok_decoder 定长导出
++        constexpr int SR_PER_FRAME  = 1920; // 24000Hz / 12.5fps
++        const size_t n_frames = codes_buf.size() / FRAME_CODES;
++        if (n_frames == 0) {
++            codes_buf.clear();
++            return true;
++        }
++        std::vector<float> out(CHUNK_FRAMES * SR_PER_FRAME);
++        for (size_t s = 0; s < n_frames; s += CHUNK_FRAMES) {
++            const int n = (int) std::min<size_t>(CHUNK_FRAMES, n_frames - s);
++            const double t0 = talkify_frame_prof::now_ms();
++            if (vocoder_submit_fn) {
++                if (vocoder_submit_fn(codes_buf.data() + s * FRAME_CODES, n,
++                                      voc_next_submit, vocoder_ud) != 0) {
++                    LOG_ERR("mtmd_helper_gen_audio: vocoder submit failed\n");
++                    return false;
++                }
++                voc_next_submit++;
++                voc_pending_frames.push_back(n);
++            } else if (vocoder_fn(codes_buf.data() + s * FRAME_CODES, n,
++                                  out.data(), vocoder_ud) != 0) {
++                LOG_ERR("mtmd_helper_gen_audio: external vocoder failed\n");
++                return false;
++            }
++            TFP_LOG("voc_ext chunk_frames=%d ms=%.1f", n,
++                    talkify_frame_prof::now_ms() - t0);
++            if (!vocoder_submit_fn) {
++                audio_pcm.insert(audio_pcm.end(), out.begin(), out.begin() + n * SR_PER_FRAME);
++            }
++        }
++        codes_buf.clear();
++        return true;
++    }
++
++    // 异步模式:按序取回 [voc_next_wait, upto) 的块并入 PCM
++    bool voc_wait_upto(int64_t upto) {
++        constexpr int SR_PER_FRAME = 1920;
++        if (!vocoder_wait_fn) return true;
++        std::vector<float> out(25 * SR_PER_FRAME);
++        while (voc_next_wait < upto) {
++            if (vocoder_wait_fn(voc_next_wait, out.data(), vocoder_ud) != 0) {
++                LOG_ERR("mtmd_helper_gen_audio: vocoder wait failed\n");
++                voc_pending_frames.clear();
++                return false;
++            }
++            const int n = voc_pending_frames.empty() ? 25 : voc_pending_frames.front();
++            if (!voc_pending_frames.empty()) voc_pending_frames.erase(voc_pending_frames.begin());
++            audio_pcm.insert(audio_pcm.end(), out.begin(), out.begin() + n * SR_PER_FRAME);
++            voc_next_wait++;
++        }
++        return true;
++    }
++
++    // 丢弃还在飞的块(换句 reset 时调用):等完成但不要 PCM
++    void voc_discard_pending() {
++        if (!vocoder_wait_fn) return;
++        std::vector<float> scratch(25 * 1920);
++        while (voc_next_wait < voc_next_submit) {
++            if (vocoder_wait_fn(voc_next_wait, scratch.data(), vocoder_ud) != 0) break;
++            voc_next_wait++;
++        }
++        voc_pending_frames.clear();
++        voc_next_submit = voc_next_wait = 0;
++    }
++
+     // one GEN_WAV process() call over the buffered codes, state is carried across batches
+     bool flush_gen_wav() {
+         if (codes_buf.empty()) {
+             return true;
+         }
++        if (vocoder_fn || vocoder_submit_fn) {
++            return flush_vocoder_ext();
++        }
+         mtmd_gen_inp inp = mtmd_gen_inp_default(mctx);
+         inp.type       = MTMD_GEN_PROCESS_TYPE_GEN_WAV;
+         inp.codes      = codes_buf.data();
+@@ -410,10 +554,13 @@ private:
+         inp.state_data = c2w_state.empty() ? nullptr : (const char *) c2w_state.data();
+         inp.state_size = c2w_state.size();
+         mtmd_gen_out out{};
++        const double t_wav0 = talkify_frame_prof::now_ms();
+         if (mtmd_gen_audio_process(mctx, &inp, &out) != 0) {
+             LOG_ERR("mtmd_helper_gen_audio: gen_wav process failed\n");
+             return false;
+         }
++        TFP_LOG("wav_flush n_frames=%zu ms=%.1f", codes_buf.size(),
++                talkify_frame_prof::now_ms() - t_wav0);
+         audio_pcm.insert(audio_pcm.end(), out.audio, out.audio + out.n_samples);
+         c2w_state.assign(out.state_data, out.state_data + out.state_size);
+         codes_buf.clear();
+@@ -449,6 +596,16 @@ private:
+     int32_t  top_k = 50;
+     float    top_p = 1.0f;
+     uint32_t seed  = UINT32_MAX;
++    // 外部声码器(TalkifyNPU),由 set_input 从 inp 拷入
++    int32_t (* vocoder_fn)(const int32_t * codes, int32_t n_frames,
++                           float * pcm_out, void * user_data) = nullptr;
++    int32_t (* vocoder_submit_fn)(const int32_t * codes, int32_t n_frames,
++                                  int64_t seq, void * user_data) = nullptr;
++    int32_t (* vocoder_wait_fn)(int64_t seq, float * pcm_out, void * user_data) = nullptr;
++    void * vocoder_ud = nullptr;
++    // 异步声码器状态:submit/wait 序号 + 每块帧数(按 seq 序)
++    int64_t voc_next_submit = 0, voc_next_wait = 0;
++    std::vector<int32_t> voc_pending_frames;
+     std::vector<int32_t> codes_buf;
+     std::vector<uint8_t> c2w_state;
+     std::vector<float>   audio_pcm;
+@@ -1060,3 +1217,10 @@ int32_t mtmd_helper_gen_audio_get_output(mtmd_helper_gen_audio * ctx, int32_t *
+     }
+     return ctx->pipeline->get_output(out_sample_rate, out_data, out_data_len, out_n_samples);
+ }
++
++int32_t mtmd_helper_gen_audio_finish(mtmd_helper_gen_audio * ctx) {
++    if (!ctx->pipeline) {
++        return 1;
++    }
++    return ctx->pipeline->finish();
++}
+diff --git a/tools/mtmd/mtmd-helper.h b/tools/mtmd/mtmd-helper.h
+index 10f2171..1523e06 100644
+--- a/tools/mtmd/mtmd-helper.h
++++ b/tools/mtmd/mtmd-helper.h
+@@ -207,6 +207,23 @@ struct mtmd_helper_gen_audio_inp {
+     uint32_t seed; // UINT32_MAX for random (default: random)
+ 
+     enum mtmd_helper_gen_audio_outtype out_type;
++
++    // 可选外部声码器(TalkifyNPU):非空时用它替代内置 code2wav 图。
++    // codes 为 [n_frames][16] int32(RVQ 码);输出单声道 fp32 PCM @24000Hz,
++    // 写入 pcm_out(容量 n_frames*1920);返回 0 成功,非 0 失败(回退内置图)。
++    // 外部声码器按独立块解码(无跨块状态),与官方 25 帧块推理语义一致。
++    int32_t (* vocoder_fn)(const int32_t * codes, int32_t n_frames,
++                           float * pcm_out, void * user_data);
++    void * vocoder_ud;
++
++    // 可选异步声码器(与 vocoder_fn 互斥,设置后不再调用 vocoder_fn):
++    // submit 把一块 codes 入队后立即返回(解码在实现方线程上与帧生成并行,
++    // 例如 NPU 声码器 + CPU backbone 流水线);wait 阻塞到该 seq 的块完成,
++    // 把 PCM 写入 pcm_out(n_frames*1920)。NPU/实现方串行保证 seq 有序完成。
++    // seq 从 0 起单调递增;实现方需容忍同一 seq 的 wait 被丢弃(见 reset 语义)。
++    int32_t (* vocoder_submit_fn)(const int32_t * codes, int32_t n_frames,
++                                  int64_t seq, void * user_data);
++    int32_t (* vocoder_wait_fn)(int64_t seq, float * pcm_out, void * user_data);
+ };
+ 
+ MTMD_API mtmd_helper_gen_audio * mtmd_helper_gen_audio_init(
+@@ -247,6 +264,11 @@ MTMD_API int32_t mtmd_helper_gen_audio_get_output(
+                         size_t * out_data_len,
+                         int64_t * out_n_samples);
+ 
++// waits for all in-flight async vocoder chunks and merges their PCM into the
++// output; call once after the frame loop, before the final get_output().
++// no-op for the synchronous vocoder path. returns 0 on success.
++MTMD_API int32_t mtmd_helper_gen_audio_finish(mtmd_helper_gen_audio * ctx);
++
+ #ifdef __cplusplus
+ } // extern "C"
+ #endif
+@@ -290,6 +312,9 @@ struct gen_audio {
+     int32_t get_output(int32_t * out_sample_rate, const char ** out_data, size_t * out_data_len, int64_t * out_n_samples = nullptr) {
+         return mtmd_helper_gen_audio_get_output(ctx.get(), out_sample_rate, out_data, out_data_len, out_n_samples);
+     }
++    int32_t finish() {
++        return mtmd_helper_gen_audio_finish(ctx.get());
++    }
+ };
+ 
+ } // namespace mtmd_helper

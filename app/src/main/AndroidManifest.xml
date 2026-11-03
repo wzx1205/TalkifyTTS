@@ -93,6 +93,26 @@
             android:name=".infrastructure.provider.local.LocalModelDownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!--
+            Adreno/Mali GPU 的 OpenCL 加载器（ggml-opencl 后端运行时依赖）。
+            Android 12+ 上厂商公开库必须显式声明才会进应用链接命名空间，
+            否则 DT_NEEDED/dlopen 均报 not found（ColorOS 实测）。
+            required=false：无 OpenCL 的设备照常安装，引擎自动回退 CPU。
+        -->
+        <uses-native-library
+            android:name="libOpenCL.so"
+            android:required="false" />
+        <!--
+            Qualcomm cDSP FastRPC 通路：QNN HTP(NPU) 后端的 libQnnHtpVxxStub 依赖。
+            同上，App 域必须声明后才能解析 /vendor 公开库。
+        -->
+        <uses-native-library
+            android:name="libcdsprpc.so"
+            android:required="false" />
+        <uses-native-library
+            android:name="libadsprpc.so"
+            android:required="false" />
     </application>
 
 </manifest>

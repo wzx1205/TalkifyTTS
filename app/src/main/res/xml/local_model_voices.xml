@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    ZipVoice 本地模型内置音色目录
-    参考音频随 APK 内置于 assets/voices/（24kHz 单声道 PCM16 wav），
-    referenceText 为参考音频逐字稿，必须与音频内容完全一致，否则克隆质量明显下降。
+    本地模型内置音色目录（ZipVoice 与 Qwen3-TTS 共用）
+    参考音频随 APK 内置于 assets/voices/（24kHz 单声道 PCM16 wav）。
+    ZipVoice 需要 referenceText 且必须与音频逐字一致；Qwen3-TTS 只取
+    参考音频本身做说话人克隆，逐字稿字段被忽略。
 
     长度说明：ZipVoice 每次推理都要对参考音频的梅尔帧做注意力，参考音频越长
     单块合成越慢（官方建议 3~10 秒）。以下样音已在标点停顿处裁剪至约 4~7 秒，

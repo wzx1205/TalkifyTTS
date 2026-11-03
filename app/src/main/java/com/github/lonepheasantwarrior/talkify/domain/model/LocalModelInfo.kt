@@ -17,14 +17,17 @@ enum class ModelDownloadStatus {
 /**
  * 本地 TTS 模型架构
  *
- * 决定 sherpa-onnx 走哪条推理路径，以及"音色"如何定义：
- * - [ZIPVOICE]：零样本流匹配，音色由参考音频 + 逐字稿定义（referenceAudio 必填）
- * - [MELO_VITS]：MeloTTS 的 VITS 变体，多说话人由 speaker id 选择（无需参考音频），
- *   中文分词/注音由模型包内的 lexicon + dict 提供
+ * 决定推理路径与"音色"如何定义：
+ * - [ZIPVOICE]：零样本流匹配（sherpa-onnx），音色由参考音频 + 逐字稿定义
+ * - [MELO_VITS]：MeloTTS 的 VITS 变体（sherpa-onnx），多说话人由 speaker id 选择
+ *   （无需参考音频），中文分词/注音由模型包内的 lexicon + dict 提供
+ * - [QWEN3_LLAMA]：Qwen3-TTS（llama.cpp backbone + mtmd 音频管线），主干 GGUF +
+ *   mmproj GGUF 双文件；音色由 24kHz 参考音频零样本克隆（不需要逐字稿）
  */
 enum class LocalModelArchitecture {
     ZIPVOICE,
-    MELO_VITS
+    MELO_VITS,
+    QWEN3_LLAMA
 }
 
 /**

@@ -30,3 +30,8 @@ git -C "$DEST" checkout -q FETCH_HEAD
 rm -rf "$DEST/.git"
 
 echo "[fetch-llama-cpp] 完成。"
+
+# 应用 TalkifyTTS 的 llama.cpp 修改(NPU 声码器契约 + 帧计时桩)。
+# vanilla 源码本身不含这些改动;没有它们 tts_jni.cpp 编译会失败。
+echo "[fetch-llama-cpp] 应用 scripts/patches/llama-cpp-talkify.patch"
+git -C "$DEST" apply --whitespace=nowarn "$ROOT/scripts/patches/llama-cpp-talkify.patch"

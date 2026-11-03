@@ -18,7 +18,9 @@ import com.github.lonepheasantwarrior.talkify.domain.model.LocalModelRegistry
 import com.github.lonepheasantwarrior.talkify.domain.model.LocalModelVoice
 import com.github.lonepheasantwarrior.talkify.domain.model.ProviderIds
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.local.LocalModelManager
+import com.github.lonepheasantwarrior.talkify.infrastructure.provider.local.LocalTtsEngine
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.local.LocalVoiceCatalog
+import com.github.lonepheasantwarrior.talkify.infrastructure.provider.local.QwenTtsEngine
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.local.SherpaTtsEngine
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.local.WavSampleReader
 import com.github.lonepheasantwarrior.talkify.llm.LlmBookConfig
@@ -82,7 +84,7 @@ class LocalModelProvider : AbstractTtsProvider() {
         private var engineGeneration = 0
 
         @Volatile
-        private var engine: SherpaTtsEngine? = null
+        private var engine: LocalTtsEngine? = null
 
         @Volatile
         private var currentModelId: String? = null
@@ -101,11 +103,12 @@ class LocalModelProvider : AbstractTtsProvider() {
          * 获取共享引擎实例
          *
          * 以模型 ID 为 key 缓存引擎，切换模型时自动释放旧引擎并创建新引擎。
+         * 按架构分发：Qwen3-TTS 走 llama.cpp/mtmd 引擎，其余走 sherpa-onnx。
          */
         private fun ensureEngine(
             modelId: String,
             modelInfo: LocalModelInfo
-        ): SherpaTtsEngine = synchronized(engineLock) {
+        ): LocalTtsEngine = synchronized(engineLock) {
             if (engine != null && currentModelId == modelId) {
                 TtsLogger.d("Reusing cached engine for: $modelId", tag = TAG)
                 return engine!!
@@ -123,8 +126,12 @@ class LocalModelProvider : AbstractTtsProvider() {
                 ?: throw IllegalStateException("无法获取模型目录: $modelId")
 
             // 创建新引擎
-            val newEngine = SherpaTtsEngine(modelInfo, modelDir)
-            newEngine.initialize()
+            val newEngine: LocalTtsEngine =
+                if (modelInfo.architecture == LocalModelArchitecture.QWEN3_LLAMA) {
+                    QwenTtsEngine(modelInfo, modelDir).also { it.initialize() }
+                } else {
+                    SherpaTtsEngine(modelInfo, modelDir).also { it.initialize() }
+                }
             engine = newEngine
             currentModelId = modelId
 
@@ -356,7 +363,7 @@ class LocalModelProvider : AbstractTtsProvider() {
      * 冷启动时 LLM 加载+推理的 5-7 秒被旁白播放时长吸收，首包不再干等。
      */
     private suspend fun synthesizeBookMultiRole(
-        engine: SherpaTtsEngine,
+        engine: LocalTtsEngine,
         text: String,
         modelInfo: LocalModelInfo,
         modelDir: File,
@@ -439,7 +446,7 @@ class LocalModelProvider : AbstractTtsProvider() {
      * @return false 表示用户取消或合成中断，调用方应停止后续句子
      */
     private fun synthesizeUtterance(
-        engine: SherpaTtsEngine,
+        engine: LocalTtsEngine,
         u: Utterance,
         modelInfo: LocalModelInfo,
         modelDir: File,

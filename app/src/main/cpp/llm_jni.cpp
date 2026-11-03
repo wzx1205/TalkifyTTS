@@ -19,6 +19,8 @@
 
 #include "llama.h"
 
+#include "backend_guard.h"
+
 #define TAG "TalkifyLLM"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
@@ -95,7 +97,7 @@ Java_com_github_lonepheasantwarrior_talkify_llm_LlamaBridge_nativeInit(
     env->ReleaseStringUTFChars(j_model_path, model_path);
 
     llama_log_set(log_callback, nullptr);
-    llama_backend_init();
+    talkify::backend_acquire();
 
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = 0;            // Android CPU 推理
@@ -313,7 +315,7 @@ Java_com_github_lonepheasantwarrior_talkify_llm_LlamaBridge_nativeFree(
     if (session->ctx)   llama_free(session->ctx);
     if (session->model) llama_model_free(session->model);
     delete session;
-    llama_backend_free();
+    talkify::backend_release();
     LOGI("llama session freed");
 }
 

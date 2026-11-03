@@ -59,7 +59,7 @@ data class SynthesisResult(
 class SherpaTtsEngine(
     private val modelInfo: LocalModelInfo,
     private val modelDir: File
-) {
+) : LocalTtsEngine {
 
     private val tag = "SherpaTtsEngine[${modelInfo.id}]"
 
@@ -79,8 +79,7 @@ class SherpaTtsEngine(
     /**
      * 获取引擎当前使用的模型 ID
      */
-    @Suppress("unused")
-    fun getModelId(): String = modelInfo.id
+    override fun getModelId(): String = modelInfo.id
 
     /**
      * 初始化 Sherpa-onnx 引擎
@@ -172,13 +171,13 @@ class SherpaTtsEngine(
      * @param onAudioChunk 音频回调：(pcm16Data: ByteArray, sampleRate: Int) → Boolean
      * @return `true` 正常完成，`false` 被回调中断
      */
-    fun synthesizeStream(
+    override fun synthesizeStream(
         text: String,
         referenceAudio: FloatArray,
         referenceSampleRate: Int,
         referenceText: String,
         speed: Float,
-        speakerId: Int = 0,
+        speakerId: Int,
         onAudioChunk: (pcm16Data: ByteArray, sampleRate: Int) -> Boolean
     ): Boolean {
         if (isReleased) throw IllegalStateException("Engine has been released")
@@ -222,7 +221,7 @@ class SherpaTtsEngine(
      * 释放后可重新初始化，但推荐调用方在切换模型时创建新实例。
      */
     @Synchronized
-    fun release() {
+    override fun release() {
         if (isReleased) return
         isReleased = true
         isInitialized = false

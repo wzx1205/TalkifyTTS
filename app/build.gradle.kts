@@ -107,21 +107,31 @@ android {
         unitTests.isReturnDefaultValues = true
     }
 
-    // GenieX SDK 通过 applicationInfo.nativeLibraryDir 按路径 dlopen 插件，
-    // 默认 extractNativeLibs=false（库只在 APK 内、不落地）会让它找不到。
-    // 仅 spike 构建打开，正式包不受影响。
-    if (project.hasProperty("spikeGenieX")) {
-        packaging {
-            jniLibs {
-                useLegacyPackaging = true
-            }
+    // GenieX SDK 与 QNN HTP 探针都要求 native 库以真实文件落地:
+    // 前者按 nativeLibraryDir 路径 dlopen 插件,后者要让 cDSP 加载器读到
+    // APK 内嵌的 Hexagon skel(ADSP_LIBRARY_PATH 指向 nativeLibraryDir)。
+    // 默认 extractNativeLibs=false(库只在 APK 内)对两者都不可见。
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
         }
-        // GenieX 专用的测试源目录：只有带 -PspikeGenieX 时才纳入编译，
-        // 否则 androidTest 会因缺少 com.geniex.* 依赖而编译失败
+    }
+    // GenieX 专用的测试源目录：只有带 -PspikeGenieX 时才纳入编译，
+    // 否则 androidTest 会因缺少 com.geniex.* 依赖而编译失败
+    if (project.hasProperty("spikeGenieX")) {
         sourceSets {
             getByName("androidTest") {
                 java.srcDir("src/androidTestGenieX/java")
             }
+        }
+    }
+
+    // OpenCL 走系统 vendor 公开库（见 AndroidManifest 的 uses-native-library 声明）。
+    // 这里必须排除 CMake 链接桩 opencl-lib/arm64/libOpenCL.so 被 AGP 自动收包——
+    // APK 内同名库会优先于 /vendor 真库被加载，导致驱动链解析回退失败。
+    packaging {
+        jniLibs {
+            excludes += "**/libOpenCL.so"
         }
     }
 }

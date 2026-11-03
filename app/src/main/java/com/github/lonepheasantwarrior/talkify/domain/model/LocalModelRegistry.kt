@@ -364,9 +364,97 @@ object LocalModelRegistry {
     )
 
     /**
+     * Qwen3-TTS-12Hz-0.6B-Base（llama.cpp GGUF，推荐手机首选）
+     *
+     * 来源：HuggingFace mradermacher/Qwen3-TTS-12Hz-0.6B-Base-GGUF
+     * （用 llama.cpp 官方 convert_hf_to_gguf.py 从 Qwen/Qwen3-TTS-12Hz-0.6B-Base
+     * 转换；国内经 hf-mirror.com 加速，下载服务自动回退 HF 原站）
+     * 架构：qwen3tts 主干 LLM（Q4_K_M 344MB）+ mmproj 音频管线（Q8_0 382MB，
+     * 含说话人编码/12Hz codec/声码器），由 app 内嵌 llama.cpp 的 mtmd 库推理
+     * 语言：zh/en 等 10 语种；音色：3 秒参考音频零样本克隆（复用内置 12 音色）
+     * 许可：Apache-2.0（可商用、可分发）
+     *
+     * 性能预期（CPU 4 线程）：codec 12.5 帧/秒，旗舰机约 RTF 0.3~0.5、
+     * 中端机约 0.7~1.0，可边听边合成；内存峰值约 1.3~1.6GB。
+     */
+    val QWEN3_TTS_06B_BASE = LocalModelInfo(
+        id = "qwen3_tts_06b_base",
+        displayName = "Qwen3-TTS 0.6B 高音质",
+        description = "Qwen3-TTS 0.6B（Apache-2.0），参考音频克隆音色，自然度显著优于 ZipVoice，支持中英等 10 语种，约 730 MB",
+        downloadSizeBytes = 361_023_168L + 401_129_632L,
+        downloadSizeDisplay = "~730 MB",
+        md5 = "",
+        downloadFileInfo = mapOf(
+            "https://hf-mirror.com/mradermacher/Qwen3-TTS-12Hz-0.6B-Base-GGUF/resolve/main/Qwen3-TTS-12Hz-0.6B-Base.Q4_K_M.gguf"
+                to "qwen3-tts-0.6b-base.Q4_K_M.gguf",
+            "https://hf-mirror.com/mradermacher/Qwen3-TTS-12Hz-0.6B-Base-GGUF/resolve/main/Qwen3-TTS-12Hz-0.6B-Base.mmproj-Q8_0.gguf"
+                to "mmproj-Qwen3-TTS-12Hz-0.6B-Base-Q8_0.gguf"
+        ),
+        requiredLocalFiles = listOf(
+            "qwen3-tts-0.6b-base.Q4_K_M.gguf",
+            "mmproj-Qwen3-TTS-12Hz-0.6B-Base-Q8_0.gguf"
+        ),
+        voiceList = listOf(
+            LocalModelVoice(
+                voiceId = "zh_female_vv_uranus_bigtts",
+                displayName = "默认女声",
+                language = "zh",
+                referenceFileName = "zh_female_vv_uranus_bigtts.wav",
+                isBundled = true
+            )
+        ),
+        sampleRate = 24000,
+        supportedLanguages = listOf("zh", "en"),
+        architecture = LocalModelArchitecture.QWEN3_LLAMA
+    )
+
+    /**
+     * Qwen3-TTS-12Hz-1.7B-Base（llama.cpp 官方 GGUF，旗舰机高音质选项）
+     *
+     * 来源：ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF（llama.cpp 官方转换）
+     * 架构：qwen3tts 主干（Q4_K_M 988MB）+ mmproj（Q8_0 426MB），同 0.6B 路径
+     *
+     * 性能预期：0.6B 的约 1/3 速度。旗舰机约 RTF 0.8~1.1（勉强实时），
+     * 中端机明显慢于实时（>1.5），仅推荐骁龙 8 系/天玑 9000+ 选用；
+     * 内存峰值约 2.3~2.6GB。音质与稳定性优于 0.6B。
+     */
+    val QWEN3_TTS_17B_BASE = LocalModelInfo(
+        id = "qwen3_tts_17b_base",
+        displayName = "Qwen3-TTS 1.7B 旗舰",
+        description = "Qwen3-TTS 1.7B（Apache-2.0），音质上限更高，克隆更稳，仅推荐旗舰机型，约 1.4 GB",
+        downloadSizeBytes = 1_035_965_280L + 446_422_912L,
+        downloadSizeDisplay = "~1.4 GB",
+        md5 = "",
+        downloadFileInfo = mapOf(
+            "https://hf-mirror.com/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/resolve/main/Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf"
+                to "qwen3-tts-1.7b-base-Q4_K_M.gguf",
+            "https://hf-mirror.com/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/resolve/main/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf"
+                to "mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf"
+        ),
+        requiredLocalFiles = listOf(
+            "qwen3-tts-1.7b-base-Q4_K_M.gguf",
+            "mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf"
+        ),
+        voiceList = listOf(
+            LocalModelVoice(
+                voiceId = "zh_female_vv_uranus_bigtts",
+                displayName = "默认女声",
+                language = "zh",
+                referenceFileName = "zh_female_vv_uranus_bigtts.wav",
+                isBundled = true
+            )
+        ),
+        sampleRate = 24000,
+        supportedLanguages = listOf("zh", "en"),
+        architecture = LocalModelArchitecture.QWEN3_LLAMA
+    )
+
+    /**
      * 所有已注册的本地模型列表
      */
     val ALL_MODELS: List<LocalModelInfo> = listOf(
+        QWEN3_TTS_06B_BASE,
+        QWEN3_TTS_17B_BASE,
         MELO_TTS_ZH_EN,
         VITS_ZH_FANCHEN_C,
         ZIPVOICE_DISTILL
