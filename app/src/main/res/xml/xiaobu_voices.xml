@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<voices>
+    <voice id="xiaobu_wenrou"    displayName="温柔女声" description="小布默认音色，中文女声" language="中文" />
+    <voice id="xiaobu_minglang"  displayName="明朗男声" description="中文男声" language="中文" />
+    <voice id="xiaobu_qingleng"  displayName="清冷女声" description="中文女声" language="中文" />
+    <voice id="xiaobu_en_female" displayName="英文女声" description="English female voice" language="英文" />
+    <voice id="xiaobu_en_male"   displayName="英文男声" description="English male voice" language="英文" />
+</voices>

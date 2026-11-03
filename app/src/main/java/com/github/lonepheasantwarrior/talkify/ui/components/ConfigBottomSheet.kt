@@ -42,6 +42,7 @@ import com.github.lonepheasantwarrior.talkify.domain.model.TencentCloudConfig
 import com.github.lonepheasantwarrior.talkify.domain.model.TtsProvider
 import com.github.lonepheasantwarrior.talkify.domain.model.VolcengineConfig
 import com.github.lonepheasantwarrior.talkify.domain.model.XiaomiConfig
+import com.github.lonepheasantwarrior.talkify.domain.model.XiaobuConfig
 import com.github.lonepheasantwarrior.talkify.domain.repository.ProviderConfigRepository
 import com.github.lonepheasantwarrior.talkify.domain.repository.VoiceInfo
 import com.github.lonepheasantwarrior.talkify.domain.repository.VoiceRepository
@@ -145,6 +146,10 @@ fun ConfigBottomSheet(
             is HybridConfig -> {
                 val hybridSaved = savedConfig as? HybridConfig
                 hybridSaved ?: defaultConfig
+            }
+            is XiaobuConfig -> {
+                val xbSaved = savedConfig as? XiaobuConfig
+                xbSaved ?: defaultConfig
             }
             else -> defaultConfig
         }
@@ -712,6 +717,11 @@ private fun buildConfigFromItems(
             hybridSaved.copy(
                 voiceId = voiceId,
                 apiKey = items.find { it.key == "api_key" }?.value.orEmpty()
+            )
+        }
+        is XiaobuConfig -> {
+            XiaobuConfig(
+                voiceId = voiceId
             )
         }
         else -> defaultConfig

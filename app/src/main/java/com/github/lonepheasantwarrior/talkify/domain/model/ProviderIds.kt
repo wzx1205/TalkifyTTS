@@ -84,6 +84,19 @@ sealed class ProviderIds {
     }
 
     /**
+     * 小布助手 - OPPO/ColorOS 系统离线语音
+     *
+     * 复用系统自带的 ColorOS 离线 TTS 引擎（com.oplus.ttsaccessibilityengine，
+     * VITS 模型 + MNN 推理，纯离线），无需网络与 API Key。
+     * 仅 OPPO / 一加 / realme 等搭载 ColorOS 的设备可用。
+     */
+    data object Xiaobu : ProviderIds() {
+        override val providerId: String = "xiaobu"
+        override val defaultModelId: String = "breeno-offline-tts"
+        override val provider: String = "小布（离线）"
+    }
+
+    /**
      * 供应商唯一标识符，用于内部路由、注册表 key 和持久化键。
      */
     abstract val providerId: String
@@ -103,7 +116,7 @@ sealed class ProviderIds {
          * 获取所有定义的供应商 ID 列表
          */
         val entries: List<ProviderIds> by lazy {
-            listOf(Azure, Volcengine, TencentCloud, AliyunBailian, Xiaomi, MiniMax, LocalModel, Hybrid)
+            listOf(Azure, Volcengine, TencentCloud, AliyunBailian, Xiaomi, MiniMax, LocalModel, Hybrid, Xiaobu)
         }
     }
 }

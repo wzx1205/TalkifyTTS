@@ -71,6 +71,9 @@
     <string name="tts_error_no_provider_id_available">合成供应商未选择</string>
     <string name="tts_error_provider_not_ready">合成供应商未初始化</string>
     <string name="tts_error_synthesis_failed">语音合成失败</string>
+    <string name="tts_error_xiaobu_engine_missing">未检测到小布离线引擎（仅 OPPO/一加/realme 等 ColorOS 设备可用）</string>
+    <string name="tts_error_xiaobu_no_permission">无法切换小布发音人：请先授权 —— adb shell pm grant com.github.lonepheasantwarrior.talkify android.permission.WRITE_SECURE_SETTINGS（或授予应用 root 权限）</string>
+    <string name="tts_error_xiaobu_synthesis_failed">小布离线合成失败</string>
     <string name="tts_error_network_unavailable">网络不可用，请检查网络连接</string>
     <string name="tts_error_invalid_request">无效的合成请求</string>
     <string name="tts_error_provider_init_failed">供应商初始化失败</string>

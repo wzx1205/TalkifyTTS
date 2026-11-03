@@ -20,6 +20,8 @@ import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.Volce
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.VolcengineVoiceRepository
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.XiaomiConfigRepository
 import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.XiaomiVoiceRepository
+import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.XiaobuConfigRepository
+import com.github.lonepheasantwarrior.talkify.infrastructure.provider.repo.XiaobuVoiceRepository
 import com.github.lonepheasantwarrior.talkify.service.TtsLogger
 import com.github.lonepheasantwarrior.talkify.service.provider.impl.AliyunBailianProvider
 import com.github.lonepheasantwarrior.talkify.service.provider.impl.AzureProvider
@@ -29,6 +31,7 @@ import com.github.lonepheasantwarrior.talkify.service.provider.impl.MiniMaxProvi
 import com.github.lonepheasantwarrior.talkify.service.provider.impl.TencentCloudProvider
 import com.github.lonepheasantwarrior.talkify.service.provider.impl.VolcengineProvider
 import com.github.lonepheasantwarrior.talkify.service.provider.impl.XiaomiProvider
+import com.github.lonepheasantwarrior.talkify.service.provider.impl.XiaobuProvider
 
 /**
  * TTS 供应商工厂
@@ -149,6 +152,11 @@ object TtsProviderFactory {
                 providerFactory = { HybridProvider() },
                 createConfigRepo = { ctx -> HybridConfigRepository(ctx) },
                 createVoiceRepo = { ctx -> HybridVoiceRepository(ctx) }
+            ),
+            ProviderIds.Xiaobu.providerId to ComponentFactories(
+                providerFactory = { XiaobuProvider() },
+                createConfigRepo = { ctx -> XiaobuConfigRepository(ctx) },
+                createVoiceRepo = { ctx -> XiaobuVoiceRepository(ctx) }
             )
         ).also {
             TtsLogger.i("TtsProviderFactory: ${it.size} providers registered")

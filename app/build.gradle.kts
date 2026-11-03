@@ -24,8 +24,8 @@ android {
         applicationId = "com.github.lonepheasantwarrior.talkify"
         minSdk = 30
         targetSdk = 37
-        versionCode = 33
-        versionName = "1.0.31-multirole"
+        versionCode = 37
+        versionName = "1.0.35-multirole"
 
         // 真机验证用：-PspikeSuffix 装成独立包名（xxx.spike），
         // 避免 debug 包覆盖用户日常使用的正式版、破坏其数据
