@@ -56,6 +56,9 @@ class QwenTtsEngine(
         }
 
         TtsLogger.i("Initializing Qwen3-TTS engine: ${modelInfo.id}", tag = tag)
+        // NPU 声码器后台补拉:缺失时尽力从 GitHub Release 下载(仅非计量网络,
+        // 失败静默),本次会话若已完成加载则用 ggml,下次初始化生效
+        NpuVocoderFetcher.ensureAsync(modelDir)
         // NPU 声码器(可选):模型目录或内部 files/qnn/ 下的 voc_htp.ctx 存在才启用,
         // 初始化失败 native 层自动回退 ggml 声码器
         val vocoderCtx = listOf(
